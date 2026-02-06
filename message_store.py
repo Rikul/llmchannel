@@ -13,6 +13,7 @@ class MessageStore:
         self._lock = Lock()
         self._listeners = []
         self._message_cache = []  # In-memory cache for quick access
+        self._message_count = 0  # Track message count to avoid frequent DB queries
 
     def add_message(self, sender, content, msg_type, color, msg_id=None):
         msg_id = msg_id or str(uuid.uuid4())
@@ -36,18 +37,21 @@ class MessageStore:
             # Update cache
             msg_dict = message.to_dict()
             self._message_cache.append(msg_dict)
+            self._message_count += 1
+            
+            # Only cleanup every 10 messages to reduce overhead
+            if self._message_count > MAX_HISTORY and self._message_count % 10 == 0:
+                # Use efficient bulk delete for old messages
+                cutoff_time = Message.query.order_by(Message.timestamp.desc()).limit(
+                    MAX_HISTORY
+                ).all()[-1].timestamp
+                
+                Message.query.filter(Message.timestamp < cutoff_time).delete()
+                db.session.commit()
+            
+            # Trim cache to max history
             if len(self._message_cache) > MAX_HISTORY:
                 self._message_cache = self._message_cache[-MAX_HISTORY:]
-            
-            # Clean up old messages in database
-            total_count = Message.query.count()
-            if total_count > MAX_HISTORY:
-                oldest_messages = Message.query.order_by(Message.timestamp).limit(
-                    total_count - MAX_HISTORY
-                ).all()
-                for old_msg in oldest_messages:
-                    db.session.delete(old_msg)
-                db.session.commit()
         
         self._announce("new_message", msg_dict)
         return msg_dict
@@ -79,13 +83,7 @@ class MessageStore:
 
     def append_to_streaming(self, msg_id, token):
         with self._lock:
-            # Update database
-            message = Message.query.get(msg_id)
-            if message:
-                message.content += token
-                db.session.commit()
-            
-            # Update cache
+            # Update cache only - will persist when streaming finishes
             for msg in reversed(self._message_cache):
                 if msg["id"] == msg_id:
                     msg["content"] += token
@@ -95,10 +93,15 @@ class MessageStore:
 
     def finish_streaming(self, msg_id):
         with self._lock:
-            # Update database
+            # Update database with final content
             message = Message.query.get(msg_id)
             if message:
-                message.streaming = False
+                # Get final content from cache
+                for msg in reversed(self._message_cache):
+                    if msg["id"] == msg_id:
+                        message.content = msg["content"]
+                        message.streaming = False
+                        break
                 db.session.commit()
             
             # Update cache

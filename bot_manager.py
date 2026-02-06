@@ -87,11 +87,9 @@ class BotManager:
 
     def dispatch_to_all(self, operator_message):
         with self._lock:
-            bots = Bot.query.filter_by(enabled=True).all()
-            bots_snapshot = [
-                bot.to_dict() for bot in bots
-                if bot.api_key
-            ]
+            # Efficiently query only enabled bots with API keys
+            bots = Bot.query.filter_by(enabled=True).filter(Bot.api_key != '').all()
+            bots_snapshot = [bot.to_dict() for bot in bots]
 
         for bot in bots_snapshot:
             t = threading.Thread(
