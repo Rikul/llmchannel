@@ -11,7 +11,11 @@ app = Flask(__name__)
 CORS(app)
 
 # Database configuration
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///llmchannel.db')
+basedir = os.path.abspath(os.path.dirname(__file__))
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get(
+    'DATABASE_URL',
+    f'sqlite:///{os.path.join(basedir, "instance", "llmchannel.db")}'
+)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Initialize database
@@ -22,8 +26,14 @@ bot_mgr = BotManager(store)
 
 # Create tables and load defaults
 with app.app_context():
-    db.create_all()
-    bot_mgr.load_defaults()
+    # Ensure instance directory exists
+    os.makedirs(os.path.join(basedir, "instance"), exist_ok=True)
+    try:
+        db.create_all()
+        bot_mgr.load_defaults()
+    except Exception as e:
+        app.logger.error(f"Failed to initialize database: {e}")
+        raise
 
 
 # ── Pages ────────────────────────────────────────────────────────────────
