@@ -36,9 +36,13 @@ def _format_channel_history(messages, bot_nickname):
     return merged
 
 
-def stream_response(provider, model, api_key, messages, system_prompt):
+def stream_response(provider, model, api_key, messages, system_prompt, gemini_access_token=None):
     """Generator that yields tokens one at a time from the LLM API."""
-    if not api_key:
+    if provider == "gemini":
+        if not api_key and not gemini_access_token:
+            yield "[Error: No API key or Google OAuth configured for this bot]"
+            return
+    elif not api_key:
         yield "[Error: No API key configured for this bot]"
         return
 
@@ -48,7 +52,7 @@ def stream_response(provider, model, api_key, messages, system_prompt):
         elif provider == "anthropic":
             yield from _stream_anthropic(model, api_key, messages, system_prompt)
         elif provider == "gemini":
-            yield from _stream_gemini(model, api_key, messages, system_prompt)
+            yield from _stream_gemini(model, api_key, messages, system_prompt, gemini_access_token)
         else:
             yield f"[Error: Unknown provider '{provider}']"
     except Exception as e:
@@ -96,11 +100,16 @@ def _stream_anthropic(model, api_key, messages, system_prompt):
             yield text
 
 
-def _stream_gemini(model, api_key, messages, system_prompt):
+def _stream_gemini(model, api_key, messages, system_prompt, gemini_access_token=None):
     from google import genai
     from google.genai import types
+    from google.oauth2.credentials import Credentials
 
-    client = genai.Client(api_key=api_key)
+    if gemini_access_token:
+        credentials = Credentials(token=gemini_access_token)
+        client = genai.Client(credentials=credentials)
+    else:
+        client = genai.Client(api_key=api_key)
 
     contents = []
     for msg in messages:

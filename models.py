@@ -13,6 +13,7 @@ class Bot(db.Model):
     provider = db.Column(db.String(50), nullable=False)
     model = db.Column(db.String(100), nullable=False)
     api_key = db.Column(db.String(500), nullable=True, default='')
+    gemini_access_token = db.Column(db.String(2048), nullable=True, default='')
     system_prompt = db.Column(db.Text, nullable=False)
     color = db.Column(db.String(20), nullable=False)
     enabled = db.Column(db.Boolean, nullable=False, default=True)
@@ -25,6 +26,7 @@ class Bot(db.Model):
             'provider': self.provider,
             'model': self.model,
             'api_key': self.api_key,
+            'gemini_access_token': self.gemini_access_token,
             'system_prompt': self.system_prompt,
             'color': self.color,
             'enabled': self.enabled,

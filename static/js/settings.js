@@ -29,10 +29,16 @@ var Settings = (function () {
 
     function createBotCard(bot) {
         var $card = $('<div class="bot-card" data-bot-id="' + bot.id + '"></div>');
+        var $body = $('<div class="bot-card-body" style="display: none;"></div>');
 
         // Header row with nickname, toggle, delete
         var $header = $(
             '<div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">' +
+            '<button class="icon-btn btn-toggle-bot" title="Expand" style="width: 24px; height: 24px;">' +
+            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+            '<polyline points="6 9 12 15 18 9"/>' +
+            '</svg>' +
+            '</button>' +
             '<div style="flex: 1; font-weight: 600; font-size: 0.9375rem; color: ' + escapeHtml(bot.color) + ';">' +
             escapeHtml(bot.nickname) +
             '</div>' +
@@ -45,7 +51,7 @@ var Settings = (function () {
         $card.append($header);
 
         // Row 1: Nickname + Color
-        $card.append(
+        $body.append(
             '<div style="display: grid; grid-template-columns: 1fr auto; gap: 12px;">' +
             '<div class="field-group">' +
             '<label>Nickname</label>' +
@@ -67,7 +73,7 @@ var Settings = (function () {
         });
         selectHtml += '</select>';
 
-        $card.append(
+        $body.append(
             '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">' +
             '<div class="field-group">' +
             '<label>Provider</label>' +
@@ -84,15 +90,30 @@ var Settings = (function () {
         );
 
         // API Key
-        $card.append(
+        $body.append(
             '<div class="field-group">' +
             '<label>API Key</label>' +
             '<input type="password" class="bot-api-key" value="' + escapeHtml(bot.api_key) + '" placeholder="Enter API key...">' +
             '</div>'
         );
 
+        // Gemini OAuth
+        $body.append(
+            '<div class="field-group bot-gemini-oauth" style="display: ' +
+            (bot.provider === 'gemini' ? 'block' : 'none') + ';">' +
+            '<label>Gemini OAuth</label>' +
+            '<div style="display: flex; align-items: center; gap: 10px;">' +
+            '<a class="btn btn-ghost btn-sm" href="/api/bots/' + bot.id + '/google/login" target="_blank" rel="noopener">' +
+            'Login with Google</a>' +
+            '<span class="bot-gemini-status" style="font-size: 0.75rem; color: var(--text-muted);">' +
+            (bot.gemini_access_token ? 'Connected' : 'Not connected') +
+            '</span>' +
+            '</div>' +
+            '</div>'
+        );
+
         // System Prompt
-        $card.append(
+        $body.append(
             '<div class="field-group">' +
             '<label>System Prompt</label>' +
             '<textarea class="bot-system-prompt" rows="3">' + escapeHtml(bot.system_prompt) + '</textarea>' +
@@ -100,19 +121,56 @@ var Settings = (function () {
         );
 
         // Save button
-        $card.append(
+        $body.append(
             '<div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px;">' +
             '<button class="btn btn-primary btn-sm btn-save-bot">Save</button>' +
             '</div>'
         );
 
+        $card.append($body);
+
         // ── Event handlers ──
+
+        // Collapse/expand
+        $header.on('click', function (e) {
+            if ($(e.target).closest('button, input, select, textarea, label').length) {
+                return;
+            }
+            $body.slideToggle(150);
+        });
+
+        $card.find('.btn-toggle-bot').on('click', function (e) {
+            e.stopPropagation();
+            $body.slideToggle(150);
+        });
 
         // Provider change -> update model hints
         $card.find('.bot-provider').on('change', function () {
             var provider = $(this).val();
-            var $datalist = $card.find('datalist');
-            $datalist.html(buildModelOptions(provider));
+            var hints = modelHints[provider] || [];
+            var $modelGroup = $card.find('.bot-model').closest('.field-group');
+            var currentValue = $card.find('.bot-model').val();
+            var nextValue = '';
+
+            if ($.inArray(currentValue, hints) !== -1) {
+                nextValue = currentValue;
+            } else if (hints.length) {
+                nextValue = hints[0];
+            }
+
+            var listId = 'models-' + bot.id + '-' + Date.now();
+            $modelGroup.find('.bot-model').remove();
+            $modelGroup.find('datalist').remove();
+            $modelGroup.append(
+                '<input type="text" class="bot-model" value="' +
+                escapeHtml(nextValue) +
+                '" list="' + listId + '">' +
+                '<datalist id="' + listId + '">' +
+                buildModelOptions(provider) +
+                '</datalist>'
+            );
+
+            $card.find('.bot-gemini-oauth').toggle(provider === 'gemini');
         });
 
         // Save

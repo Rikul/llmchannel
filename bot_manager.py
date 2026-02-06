@@ -2,6 +2,7 @@ import copy
 import threading
 import uuid
 from flask import current_app
+from sqlalchemy import and_, or_
 
 import llm_clients
 from config import DEFAULT_BOTS
@@ -50,6 +51,7 @@ class BotManager:
                     provider=provider,
                     model=model,
                     api_key=api_key,
+                    gemini_access_token="",
                     system_prompt=system_prompt,
                     color=color,
                     enabled=True
@@ -119,8 +121,17 @@ class BotManager:
             # Using .is_(True) for explicit boolean comparison and handling NULLs
             bots = Bot.query.filter(
                 Bot.enabled.is_(True),
-                Bot.api_key.isnot(None),
-                Bot.api_key != ''
+                or_(
+                    and_(
+                        Bot.provider == "gemini",
+                        Bot.gemini_access_token.isnot(None),
+                        Bot.gemini_access_token != ""
+                    ),
+                    and_(
+                        Bot.api_key.isnot(None),
+                        Bot.api_key != ""
+                    )
+                )
             ).all()
             bots_snapshot = [bot.to_dict() for bot in bots]
 
@@ -152,6 +163,7 @@ class BotManager:
                     provider=bot_config["provider"],
                     model=bot_config["model"],
                     api_key=bot_config["api_key"],
+                    gemini_access_token=bot_config.get("gemini_access_token", ""),
                     messages=formatted,
                     system_prompt=bot_config["system_prompt"],
                 ):
