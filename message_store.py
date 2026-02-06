@@ -43,13 +43,16 @@ class MessageStore:
             # Only cleanup every 10 messages to reduce overhead
             if self._message_count > MAX_HISTORY:
                 if self._message_count % 10 == 0:
-                    # Use efficient bulk delete for old messages
-                    recent_messages = Message.query.order_by(Message.timestamp.desc()).limit(
-                        MAX_HISTORY
-                    ).all()
-                    
-                    if len(recent_messages) == MAX_HISTORY:
-                        cutoff_time = recent_messages[-1].timestamp
+                    # Use efficient bulk delete for old messages without loading full objects
+                    cutoff_time = (
+                        db.session.query(Message.timestamp)
+                        .order_by(Message.timestamp.desc())
+                        .offset(MAX_HISTORY - 1)
+                        .limit(1)
+                        .scalar()
+                    )
+
+                    if cutoff_time is not None:
                         Message.query.filter(Message.timestamp < cutoff_time).delete()
                         db.session.commit()
             
