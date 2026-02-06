@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IRC Chat — LLM Channel</title>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <!-- Tailwind CSS v4 CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+
+    <!-- Custom Styles -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+</head>
+<body class="h-screen overflow-hidden flex flex-col">
+
+    <!-- ── Header ──────────────────────────────────────────────────── -->
+    <header class="app-header h-12 flex items-center px-5 shrink-0">
+        <div class="flex items-center gap-2">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text-muted);">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+            </svg>
+            <span style="font-weight: 700; font-size: 0.9375rem;">#llm-channel</span>
+        </div>
+        <div class="ml-auto flex items-center gap-3">
+            <span id="participant-count" style="font-size: 0.75rem; color: var(--text-muted);">0 participants</span>
+        </div>
+    </header>
+
+    <!-- ── Main Layout ─────────────────────────────────────────────── -->
+    <div class="flex flex-1 overflow-hidden">
+
+        <!-- ── Sidebar ─────────────────────────────────────────────── -->
+        <aside class="sidebar w-60 flex flex-col shrink-0">
+            <div style="padding: 12px 16px; font-size: 0.6875rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted);">
+                Users
+            </div>
+            <div id="user-list" class="flex-1 overflow-y-auto px-2" style="padding-bottom: 8px;">
+                <!-- Dynamically populated -->
+            </div>
+
+            <!-- Sidebar Bottom Icons -->
+            <div class="sidebar-bottom">
+                <button id="btn-settings" class="icon-btn" title="Settings">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="3"/>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                    </svg>
+                </button>
+                <button id="btn-theme" class="icon-btn" title="Toggle theme">
+                    <!-- Populated by theme.js -->
+                </button>
+                <button id="btn-clear" class="icon-btn" title="Clear chat" style="margin-left: auto;">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="3 6 5 6 21 6"/>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                    </svg>
+                </button>
+            </div>
+        </aside>
+
+        <!-- ── Chat Area ───────────────────────────────────────────── -->
+        <main class="flex-1 flex flex-col overflow-hidden">
+
+            <!-- Messages -->
+            <div id="messages" class="flex-1 overflow-y-auto" style="padding: 8px 0;">
+                <!-- Welcome message -->
+                <div class="msg-system" style="padding: 24px 16px; font-style: italic; color: var(--text-muted); font-size: 0.8125rem; text-align: center;">
+                    Welcome to <strong>#llm-channel</strong>. Configure your bots in Settings and start chatting.
+                </div>
+            </div>
+
+            <!-- Input Bar -->
+            <div class="input-area" style="padding: 12px 16px;">
+                <form id="chat-form" style="display: flex; gap: 10px;">
+                    <input
+                        id="chat-input"
+                        type="text"
+                        class="chat-input"
+                        placeholder="Type a message..."
+                        autocomplete="off"
+                        style="flex: 1; padding: 10px 16px; border-radius: 8px;"
+                    >
+                    <button type="submit" class="btn btn-primary" style="padding: 10px 20px; border-radius: 8px;">
+                        <span style="display: flex; align-items: center; gap: 6px;">
+                            Send
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <line x1="22" y1="2" x2="11" y2="13"/>
+                                <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                            </svg>
+                        </span>
+                    </button>
+                </form>
+            </div>
+        </main>
+    </div>
+
+    <!-- ── Settings Modal ──────────────────────────────────────────── -->
+    <div id="settings-modal" class="modal-backdrop">
+        <div class="modal-panel">
+            <div class="modal-header">
+                <h2 style="font-size: 1.125rem; font-weight: 700;">Bot Settings</h2>
+                <button id="btn-close-settings" class="icon-btn" title="Close">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div id="bot-config-list">
+                    <!-- Dynamically populated bot cards -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="btn-add-bot" class="btn btn-ghost">
+                    <span style="display: flex; align-items: center; gap: 6px;">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="12" y1="5" x2="12" y2="19"/>
+                            <line x1="5" y1="12" x2="19" y2="12"/>
+                        </svg>
+                        Add Bot
+                    </span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Scripts ─────────────────────────────────────────────────── -->
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="{{ url_for('static', filename='js/theme.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/settings.js') }}"></script>
+</body>
+</html>
