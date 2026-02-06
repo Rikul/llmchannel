@@ -14,6 +14,7 @@ class MessageStore:
         self._listeners = []
         self._message_cache = []  # In-memory cache for quick access
         self._message_count = 0  # Track message count to avoid frequent DB queries
+        # Will be initialized when database context is available
 
     def add_message(self, sender, content, msg_type, color, msg_id=None):
         msg_id = msg_id or str(uuid.uuid4())
@@ -42,12 +43,14 @@ class MessageStore:
             # Only cleanup every 10 messages to reduce overhead
             if self._message_count > MAX_HISTORY and self._message_count % 10 == 0:
                 # Use efficient bulk delete for old messages
-                cutoff_time = Message.query.order_by(Message.timestamp.desc()).limit(
+                recent_messages = Message.query.order_by(Message.timestamp.desc()).limit(
                     MAX_HISTORY
-                ).all()[-1].timestamp
+                ).all()
                 
-                Message.query.filter(Message.timestamp < cutoff_time).delete()
-                db.session.commit()
+                if len(recent_messages) == MAX_HISTORY:
+                    cutoff_time = recent_messages[-1].timestamp
+                    Message.query.filter(Message.timestamp < cutoff_time).delete()
+                    db.session.commit()
             
             # Trim cache to max history
             if len(self._message_cache) > MAX_HISTORY:
@@ -118,9 +121,16 @@ class MessageStore:
             if self._message_cache:
                 return list(self._message_cache)
             
-            # Load from database if cache is empty
-            messages = Message.query.order_by(Message.timestamp).limit(MAX_HISTORY).all()
+            # Load from database if cache is empty (e.g., after app restart)
+            messages = Message.query.order_by(Message.timestamp).all()
+            # Keep only the most recent MAX_HISTORY messages
+            if len(messages) > MAX_HISTORY:
+                messages = messages[-MAX_HISTORY:]
+            
             self._message_cache = [msg.to_dict() for msg in messages]
+            # Initialize message count on first load
+            if self._message_count == 0:
+                self._message_count = len(messages)
             return list(self._message_cache)
 
     def clear(self):
