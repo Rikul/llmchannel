@@ -1,16 +1,29 @@
 from flask import Flask, render_template, request, jsonify, Response
 from flask_cors import CORS
+import os
 
 from config import OPERATOR_NAME, OPERATOR_COLOR
 from message_store import MessageStore
 from bot_manager import BotManager
+from models import db
 
 app = Flask(__name__)
 CORS(app)
 
+# Database configuration
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///llmchannel.db')
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# Initialize database
+db.init_app(app)
+
 store = MessageStore()
 bot_mgr = BotManager(store)
-bot_mgr.load_defaults()
+
+# Create tables and load defaults
+with app.app_context():
+    db.create_all()
+    bot_mgr.load_defaults()
 
 
 # ── Pages ────────────────────────────────────────────────────────────────

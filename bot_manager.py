@@ -4,68 +4,93 @@ import uuid
 
 import llm_clients
 from config import DEFAULT_BOTS
+from models import db, Bot
 
 
 class BotManager:
     def __init__(self, message_store):
-        self.bots = {}
         self.message_store = message_store
         self._lock = threading.Lock()
 
     def load_defaults(self):
-        for bot_cfg in DEFAULT_BOTS:
-            bot = copy.deepcopy(bot_cfg)
-            self.bots[bot["id"]] = bot
+        """Load default bots into database if none exist."""
+        with self._lock:
+            existing_count = Bot.query.count()
+            if existing_count == 0:
+                for bot_cfg in DEFAULT_BOTS:
+                    bot = Bot(
+                        id=bot_cfg['id'],
+                        nickname=bot_cfg['nickname'],
+                        provider=bot_cfg['provider'],
+                        model=bot_cfg['model'],
+                        api_key=bot_cfg['api_key'],
+                        system_prompt=bot_cfg['system_prompt'],
+                        color=bot_cfg['color'],
+                        enabled=bot_cfg['enabled']
+                    )
+                    db.session.add(bot)
+                db.session.commit()
 
     def add_bot(self, nickname, provider, model, api_key, system_prompt, color):
-        bot = {
-            "id": str(uuid.uuid4()),
-            "nickname": nickname,
-            "provider": provider,
-            "model": model,
-            "api_key": api_key,
-            "system_prompt": system_prompt,
-            "color": color,
-            "enabled": True,
-        }
+        bot = Bot(
+            id=str(uuid.uuid4()),
+            nickname=nickname,
+            provider=provider,
+            model=model,
+            api_key=api_key,
+            system_prompt=system_prompt,
+            color=color,
+            enabled=True
+        )
         with self._lock:
-            self.bots[bot["id"]] = bot
-        return bot
+            db.session.add(bot)
+            db.session.commit()
+        return bot.to_dict()
 
     def remove_bot(self, bot_id):
         with self._lock:
-            return self.bots.pop(bot_id, None)
+            bot = Bot.query.get(bot_id)
+            if bot:
+                db.session.delete(bot)
+                db.session.commit()
+                return bot.to_dict()
+            return None
 
     def update_bot(self, bot_id, **kwargs):
         with self._lock:
-            bot = self.bots.get(bot_id)
+            bot = Bot.query.get(bot_id)
             if not bot:
                 return None
             for key, value in kwargs.items():
-                if key in bot and key != "id":
-                    bot[key] = value
-            return bot
+                if hasattr(bot, key) and key != 'id':
+                    setattr(bot, key, value)
+            db.session.commit()
+            return bot.to_dict()
 
     def get_bot(self, bot_id):
-        return self.bots.get(bot_id)
+        bot = Bot.query.get(bot_id)
+        return bot.to_dict() if bot else None
 
     def get_all_bots(self):
         with self._lock:
-            return list(self.bots.values())
+            bots = Bot.query.all()
+            return [bot.to_dict() for bot in bots]
 
     def set_bot_enabled(self, bot_id, enabled):
         with self._lock:
-            bot = self.bots.get(bot_id)
+            bot = Bot.query.get(bot_id)
             if bot:
-                bot["enabled"] = enabled
-                return bot
+                bot.enabled = enabled
+                db.session.commit()
+                return bot.to_dict()
         return None
 
     def dispatch_to_all(self, operator_message):
         with self._lock:
+            bots = Bot.query.filter_by(enabled=True).all()
             bots_snapshot = [
-                copy.deepcopy(b) for b in self.bots.values()
-                if b["enabled"] and b["api_key"]
+                bot.to_dict() for bot in bots
+                if bot.api_key
             ]
 
         for bot in bots_snapshot:
