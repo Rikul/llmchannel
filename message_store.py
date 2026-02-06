@@ -41,16 +41,17 @@ class MessageStore:
             self._message_count += 1
             
             # Only cleanup every 10 messages to reduce overhead
-            if self._message_count > MAX_HISTORY and self._message_count % 10 == 0:
-                # Use efficient bulk delete for old messages
-                recent_messages = Message.query.order_by(Message.timestamp.desc()).limit(
-                    MAX_HISTORY
-                ).all()
-                
-                if len(recent_messages) == MAX_HISTORY:
-                    cutoff_time = recent_messages[-1].timestamp
-                    Message.query.filter(Message.timestamp < cutoff_time).delete()
-                    db.session.commit()
+            if self._message_count > MAX_HISTORY:
+                if self._message_count % 10 == 0:
+                    # Use efficient bulk delete for old messages
+                    recent_messages = Message.query.order_by(Message.timestamp.desc()).limit(
+                        MAX_HISTORY
+                    ).all()
+                    
+                    if len(recent_messages) == MAX_HISTORY:
+                        cutoff_time = recent_messages[-1].timestamp
+                        Message.query.filter(Message.timestamp < cutoff_time).delete()
+                        db.session.commit()
             
             # Trim cache to max history
             if len(self._message_cache) > MAX_HISTORY:
@@ -128,9 +129,8 @@ class MessageStore:
                 messages = messages[-MAX_HISTORY:]
             
             self._message_cache = [msg.to_dict() for msg in messages]
-            # Initialize message count on first load
-            if self._message_count == 0:
-                self._message_count = len(messages)
+            # Synchronize message count with database
+            self._message_count = Message.query.count()
             return list(self._message_cache)
 
     def clear(self):

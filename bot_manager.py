@@ -89,7 +89,7 @@ class BotManager:
         with self._lock:
             # Efficiently query only enabled bots with non-empty API keys
             bots = Bot.query.filter(
-                Bot.enabled == True,
+                Bot.enabled,
                 Bot.api_key != '',
                 Bot.api_key.isnot(None)
             ).all()
