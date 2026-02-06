@@ -36,9 +36,8 @@ var Settings = (function () {
             '<div style="flex: 1; font-weight: 600; font-size: 0.9375rem; color: ' + escapeHtml(bot.color) + ';">' +
             escapeHtml(bot.nickname) +
             '</div>' +
-            '<label style="display: flex; align-items: center; gap: 6px; font-size: 0.75rem; color: var(--text-secondary); cursor: pointer;">' +
+            '<label style="display: flex; align-items: left; gap: 6px; font-size: 0.25rem; color: var(--text-secondary); cursor: pointer; flex-shrink: 0; white-space: nowrap;">' +
             '<input type="checkbox" class="toggle-switch bot-enabled" ' + (bot.enabled ? 'checked' : '') + '>' +
-            'Enabled' +
             '</label>' +
             '<button class="btn btn-danger btn-sm btn-delete-bot" title="Delete bot">Delete</button>' +
             '</div>'
