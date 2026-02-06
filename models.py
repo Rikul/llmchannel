@@ -12,7 +12,7 @@ class Bot(db.Model):
     nickname = db.Column(db.String(100), nullable=False)
     provider = db.Column(db.String(50), nullable=False)
     model = db.Column(db.String(100), nullable=False)
-    api_key = db.Column(db.String(500), nullable=False, default='')
+    api_key = db.Column(db.String(500), nullable=True, default='')
     system_prompt = db.Column(db.Text, nullable=False)
     color = db.Column(db.String(20), nullable=False)
     enabled = db.Column(db.Boolean, nullable=False, default=True)
