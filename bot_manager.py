@@ -68,8 +68,9 @@ class BotManager:
             return bot.to_dict()
 
     def get_bot(self, bot_id):
-        bot = Bot.query.get(bot_id)
-        return bot.to_dict() if bot else None
+        with self._lock:
+            bot = Bot.query.get(bot_id)
+            return bot.to_dict() if bot else None
 
     def get_all_bots(self):
         with self._lock:
