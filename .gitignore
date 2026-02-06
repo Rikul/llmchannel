@@ -1,5 +1,12 @@
-__pycache__
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
 *.db
 *.sqlite
 *.sqlite3
 instance/
+.env
+.venv
+env/
+venv/
