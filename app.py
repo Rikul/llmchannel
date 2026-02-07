@@ -33,6 +33,7 @@ db.init_app(app)
 
 store = MessageStore()
 bot_mgr = BotManager(store)
+store.set_on_message_finalized(bot_mgr.handle_message_finalized)
 
 
 def _ensure_bot_columns():
@@ -104,7 +105,6 @@ def send_message():
         msg_type="operator",
         color=OPERATOR_COLOR,
     )
-    bot_mgr.dispatch_to_all(msg)
     return jsonify(msg), 201
 
 

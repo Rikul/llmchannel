@@ -4,6 +4,7 @@ var ChatApp = (function () {
     var state = {
         messages: [],
         streamingMessages: {},  // msg_id -> true (DOM elements found by id)
+        pendingStreams: {},
         evtSource: null,
     };
 
@@ -101,20 +102,25 @@ var ChatApp = (function () {
 
         evtSource.addEventListener('stream_start', function (e) {
             var msg = JSON.parse(e.data);
-            state.messages.push(msg);
-
-            var $container = $('#messages');
-            $container.append(createMessageHtml(msg));
-
-            // Add streaming cursor
-            $('#content-' + msg.id).addClass('streaming-cursor');
-            state.streamingMessages[msg.id] = true;
-            scrollToBottom();
+            state.pendingStreams[msg.id] = msg;
         });
 
         evtSource.addEventListener('stream_token', function (e) {
             var data = JSON.parse(e.data);
             var $content = $('#content-' + data.id);
+            if (!$content.length) {
+                var pending = state.pendingStreams[data.id];
+                if (pending) {
+                    pending.content = data.token;
+                    state.messages.push(pending);
+                    appendMessage(pending);
+                    $('#content-' + pending.id).addClass('streaming-cursor');
+                    state.streamingMessages[pending.id] = true;
+                    delete state.pendingStreams[data.id];
+                    scrollToBottom();
+                    return;
+                }
+            }
             if ($content.length) {
                 // Append token as text (not html)
                 var current = $content.text();
@@ -127,6 +133,7 @@ var ChatApp = (function () {
             var data = JSON.parse(e.data);
             $('#content-' + data.id).removeClass('streaming-cursor');
             delete state.streamingMessages[data.id];
+            delete state.pendingStreams[data.id];
 
             // Update the stored message content
             for (var i = state.messages.length - 1; i >= 0; i--) {

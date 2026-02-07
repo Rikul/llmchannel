@@ -1,5 +1,6 @@
 import copy
 import threading
+import time
 import uuid
 from flask import current_app
 from sqlalchemy import and_, or_
@@ -14,6 +15,10 @@ class BotManager:
         self.message_store = message_store
         self._lock = threading.Lock()
         self._app = None  # Will be set when app context is available
+        self._last_seen_msg_id = {}
+        self._in_flight = set()
+        self._next_dispatch_time = 0.0
+        self._dispatch_delay = 1.5
 
     def load_defaults(self):
         """Load default bots into database if none exist."""
@@ -115,37 +120,15 @@ class BotManager:
                 db.session.rollback()
                 raise Exception(f"Failed to set bot enabled status: {e}")
 
-    def dispatch_to_all(self, operator_message):
-        with self._lock:
-            # Efficiently query only enabled bots with non-empty API keys
-            # Using .is_(True) for explicit boolean comparison and handling NULLs
-            bots = Bot.query.filter(
-                Bot.enabled.is_(True),
-                or_(
-                    and_(
-                        Bot.provider == "gemini",
-                        Bot.gemini_access_token.isnot(None),
-                        Bot.gemini_access_token != ""
-                    ),
-                    and_(
-                        Bot.api_key.isnot(None),
-                        Bot.api_key != ""
-                    )
-                )
-            ).all()
-            bots_snapshot = [bot.to_dict() for bot in bots]
+    def dispatch_to_all(self, message):
+        if message:
+            self.handle_message_finalized(message)
 
-        for bot in bots_snapshot:
-            t = threading.Thread(
-                target=self._run_bot_response,
-                args=(bot,),
-                daemon=True,
-            )
-            t.start()
-
-    def _run_bot_response(self, bot_config):
+    def _run_bot_response(self, bot_config, trigger_msg_id, delay=0.0):
         # Ensure Flask app context for database operations in thread
         with self._app.app_context():
+            if delay > 0:
+                time.sleep(delay)
             msg_id = str(uuid.uuid4())
             nickname = bot_config["nickname"]
             color = bot_config["color"]
@@ -172,3 +155,59 @@ class BotManager:
                 self.message_store.append_to_streaming(msg_id, f"[Error: {str(e)}]")
             finally:
                 self.message_store.finish_streaming(msg_id)
+                with self._lock:
+                    self._in_flight.discard(bot_config.get("id"))
+                    if bot_config.get("id"):
+                        self._last_seen_msg_id[bot_config["id"]] = trigger_msg_id
+
+    def handle_message_finalized(self, message):
+        if not message:
+            return
+
+        msg_id = message.get("id")
+        sender = message.get("sender")
+        if not msg_id:
+            return
+
+        with self._lock:
+            bots = Bot.query.filter(
+                Bot.enabled.is_(True),
+                or_(
+                    and_(
+                        Bot.provider == "gemini",
+                        Bot.gemini_access_token.isnot(None),
+                        Bot.gemini_access_token != ""
+                    ),
+                    and_(
+                        Bot.api_key.isnot(None),
+                        Bot.api_key != ""
+                    )
+                )
+            ).all()
+            bots_snapshot = [bot.to_dict() for bot in bots]
+
+            for bot in bots_snapshot:
+                bot_id = bot.get("id")
+                if not bot_id:
+                    continue
+                if bot.get("nickname") == sender:
+                    self._last_seen_msg_id[bot_id] = msg_id
+                    continue
+                if self._last_seen_msg_id.get(bot_id) == msg_id:
+                    continue
+                if bot_id in self._in_flight:
+                    continue
+
+                self._last_seen_msg_id[bot_id] = msg_id
+                self._in_flight.add(bot_id)
+                now = time.time()
+                scheduled = max(now, self._next_dispatch_time)
+                self._next_dispatch_time = scheduled + self._dispatch_delay
+                delay = max(0.0, scheduled - now)
+
+                t = threading.Thread(
+                    target=self._run_bot_response,
+                    args=(bot, msg_id, delay),
+                    daemon=True,
+                )
+                t.start()

@@ -14,7 +14,11 @@ class MessageStore:
         self._listeners = []
         self._message_cache = []  # In-memory cache for quick access
         self._message_count = 0  # Track message count to avoid frequent DB queries
+        self._on_message_finalized = None
         # Will be initialized when database context is available
+
+    def set_on_message_finalized(self, callback):
+        self._on_message_finalized = callback
 
     def add_message(self, sender, content, msg_type, color, msg_id=None):
         msg_id = msg_id or str(uuid.uuid4())
@@ -64,6 +68,8 @@ class MessageStore:
                     self._message_cache = self._message_cache[-MAX_HISTORY:]
                 
                 self._announce("new_message", msg_dict)
+                if self._on_message_finalized:
+                    self._on_message_finalized(msg_dict)
                 return msg_dict
             except Exception as e:
                 db.session.rollback()
@@ -127,12 +133,16 @@ class MessageStore:
                     logging.warning(f"Message {msg_id} not found in database during finish_streaming")
                 
                 # Update cache
+                msg_dict = None
                 for msg in reversed(self._message_cache):
                     if msg["id"] == msg_id:
                         msg["streaming"] = False
+                        msg_dict = dict(msg)
                         break
                 
                 self._announce("stream_end", {"id": msg_id})
+                if msg_dict and self._on_message_finalized:
+                    self._on_message_finalized(msg_dict)
             except Exception as e:
                 db.session.rollback()
                 raise Exception(f"Failed to finish streaming message: {e}")
