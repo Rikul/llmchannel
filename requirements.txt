@@ -1,8 +1,10 @@
 flask>=3.0
 flask-cors>=4.0
 flask-sqlalchemy>=3.1
+python-dotenv>=1.0
 openai>=1.40
 anthropic>=0.34
 google-genai>=1.0
 google-auth>=2.27
 google-auth-oauthlib>=1.2
+requests>=2.31

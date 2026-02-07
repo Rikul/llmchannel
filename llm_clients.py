@@ -101,15 +101,14 @@ def _stream_anthropic(model, api_key, messages, system_prompt):
 
 
 def _stream_gemini(model, api_key, messages, system_prompt, gemini_access_token=None):
+    if gemini_access_token and not api_key:
+        yield from _stream_gemini_oauth(model, gemini_access_token, messages, system_prompt)
+        return
+
     from google import genai
     from google.genai import types
-    from google.oauth2.credentials import Credentials
 
-    if gemini_access_token:
-        credentials = Credentials(token=gemini_access_token)
-        client = genai.Client(credentials=credentials)
-    else:
-        client = genai.Client(api_key=api_key)
+    client = genai.Client(api_key=api_key)
 
     contents = []
     for msg in messages:
@@ -136,3 +135,72 @@ def _stream_gemini(model, api_key, messages, system_prompt, gemini_access_token=
     for chunk in response:
         if chunk.text:
             yield chunk.text
+
+
+def _stream_gemini_oauth(model, access_token, messages, system_prompt):
+    import json
+    import requests
+
+    endpoint = (
+        "https://generativelanguage.googleapis.com/v1beta/models/" +
+        model +
+        ":streamGenerateContent?alt=sse"
+    )
+
+    contents = []
+    for msg in messages:
+        role = "user" if msg["role"] == "user" else "model"
+        contents.append({
+            "role": role,
+            "parts": [{"text": msg["content"]}],
+        })
+
+    if not contents or contents[0]["role"] != "user":
+        contents.insert(0, {
+            "role": "user",
+            "parts": [{"text": "[System]: Channel opened."}],
+        })
+
+    payload = {
+        "contents": contents,
+    }
+
+    if system_prompt:
+        payload["systemInstruction"] = {
+            "parts": [{"text": system_prompt}],
+        }
+
+    response = requests.post(
+        endpoint,
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        },
+        data=json.dumps(payload),
+        stream=True,
+        timeout=60,
+    )
+
+    if response.status_code != 200:
+        raise Exception(f"Gemini OAuth error: {response.status_code} {response.text}")
+
+    for line in response.iter_lines(decode_unicode=True):
+        if not line:
+            continue
+        if line.startswith("data:"):
+            line = line[5:].strip()
+        if not line or line == "[DONE]":
+            continue
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+        candidates = data.get("candidates", [])
+        for candidate in candidates:
+            content = candidate.get("content", {})
+            parts = content.get("parts", [])
+            for part in parts:
+                text = part.get("text")
+                if text:
+                    yield text

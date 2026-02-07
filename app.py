@@ -5,10 +5,14 @@ import threading
 import uuid
 from sqlalchemy import inspect, text
 
+from dotenv import load_dotenv
+
 from config import OPERATOR_NAME, OPERATOR_COLOR
 from message_store import MessageStore
 from bot_manager import BotManager
 from models import db
+
+load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
@@ -236,7 +240,7 @@ def google_oauth_login(bot_id):
 
     auth_url, _ = flow.authorization_url(
         access_type="offline",
-        include_granted_scopes="true",
+        include_granted_scopes=False,
         prompt="consent",
         state=state,
     )
