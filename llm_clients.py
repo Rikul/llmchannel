@@ -270,7 +270,7 @@ def _stream_ollama(model, api_key, messages, system_prompt):
     base_url = api_key if api_key else "http://localhost:11434"
     endpoint = f"{base_url}/api/chat"
 
-    formatted = []
+    formatted = [{"role": "system", "content": system_prompt}]
     for msg in messages:
         formatted.append({"role": msg["role"], "content": msg["content"]})
 
@@ -279,10 +279,6 @@ def _stream_ollama(model, api_key, messages, system_prompt):
         "messages": formatted,
         "stream": True,
     }
-
-    # Add system prompt if provided
-    if system_prompt:
-        payload["messages"].insert(0, {"role": "system", "content": system_prompt})
 
     response = requests.post(
         endpoint,
