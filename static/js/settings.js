@@ -195,6 +195,10 @@ var Settings = (function () {
             }
             $apiKeyInput.attr('placeholder', apiKeyPlaceholder);
 
+            // For providers with different API key semantics, clear any existing (possibly masked) key value
+            if (provider === 'ollama' || provider === 'openai-compatible') {
+                $apiKeyInput.val('');
+            }
             $card.find('.bot-gemini-oauth').toggle(provider === 'gemini');
         });
 
