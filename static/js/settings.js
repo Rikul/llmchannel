@@ -76,6 +76,8 @@ var Settings = (function () {
             var displayName = p.charAt(0).toUpperCase() + p.slice(1);
             if (p === 'openai-compatible') {
                 displayName = 'OpenAI-Compatible';
+            } else if (p === 'deepseek') {
+                displayName = 'DeepSeek';
             }
             selectHtml += '<option value="' + p + '"' + sel + '>' + displayName + '</option>';
         });
