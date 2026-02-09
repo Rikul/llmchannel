@@ -101,8 +101,10 @@ var Settings = (function () {
 
         // API Key
         var apiKeyPlaceholder = 'Enter API key...';
+        var apiKeyType = 'password';
         if (bot.provider === 'ollama') {
             apiKeyPlaceholder = 'Optional: http://localhost:11434 (default)';
+            apiKeyType = 'text';
         } else if (bot.provider === 'openai-compatible') {
             apiKeyPlaceholder = 'BASE_URL|API_KEY (e.g., https://api.together.xyz/v1|your-key)';
         }
@@ -110,7 +112,7 @@ var Settings = (function () {
         $body.append(
             '<div class="field-group">' +
             '<label>API Key</label>' +
-            '<input type="password" class="bot-api-key" value="' + escapeHtml(bot.api_key) + '" placeholder="' + apiKeyPlaceholder + '">' +
+            '<input type="' + apiKeyType + '" class="bot-api-key" value="' + escapeHtml(bot.api_key) + '" placeholder="' + apiKeyPlaceholder + '">' +
             '</div>'
         );
 
@@ -190,12 +192,15 @@ var Settings = (function () {
             // Update API key placeholder based on provider
             var $apiKeyInput = $card.find('.bot-api-key');
             var apiKeyPlaceholder = 'Enter API key...';
+            var apiKeyType = 'password';
             if (provider === 'ollama') {
                 apiKeyPlaceholder = 'Optional: http://localhost:11434 (default)';
+                apiKeyType = 'text';
             } else if (provider === 'openai-compatible') {
                 apiKeyPlaceholder = 'BASE_URL|API_KEY (e.g., https://api.together.xyz/v1|your-key)';
             }
             $apiKeyInput.attr('placeholder', apiKeyPlaceholder);
+            $apiKeyInput.attr('type', apiKeyType);
 
             // For providers with different API key semantics, clear any existing (possibly masked) key value
             if (provider === 'ollama' || provider === 'openai-compatible') {
