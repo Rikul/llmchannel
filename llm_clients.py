@@ -266,8 +266,12 @@ def _stream_ollama(model, api_key, messages, system_prompt):
     import json
     import requests
 
-    # Default Ollama endpoint
+    # Default Ollama endpoint; `api_key` is overloaded here as a base URL
     base_url = api_key if api_key else "http://localhost:11434"
+    # Normalize base URL to avoid issues like "//api/chat" and stray whitespace
+    base_url = base_url.strip()
+    if base_url.endswith("/"):
+        base_url = base_url.rstrip("/")
     endpoint = f"{base_url}/api/chat"
 
     formatted = [{"role": "system", "content": system_prompt}]
