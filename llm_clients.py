@@ -42,6 +42,9 @@ def stream_response(provider, model, api_key, messages, system_prompt, gemini_ac
         if not api_key and not gemini_access_token:
             yield "[Error: No API key or Google OAuth configured for this bot]"
             return
+    elif provider == "ollama":
+        # Ollama runs locally, no API key required
+        pass
     elif not api_key:
         yield "[Error: No API key configured for this bot]"
         return
@@ -53,6 +56,14 @@ def stream_response(provider, model, api_key, messages, system_prompt, gemini_ac
             yield from _stream_anthropic(model, api_key, messages, system_prompt)
         elif provider == "gemini":
             yield from _stream_gemini(model, api_key, messages, system_prompt, gemini_access_token)
+        elif provider == "deepseek":
+            yield from _stream_deepseek(model, api_key, messages, system_prompt)
+        elif provider == "qwen":
+            yield from _stream_qwen(model, api_key, messages, system_prompt)
+        elif provider == "ollama":
+            yield from _stream_ollama(model, api_key, messages, system_prompt)
+        elif provider == "openai-compatible":
+            yield from _stream_openai_compatible(model, api_key, messages, system_prompt)
         else:
             yield f"[Error: Unknown provider '{provider}']"
     except Exception as e:
@@ -204,3 +215,125 @@ def _stream_gemini_oauth(model, access_token, messages, system_prompt):
                 text = part.get("text")
                 if text:
                     yield text
+
+
+def _stream_deepseek(model, api_key, messages, system_prompt):
+    """Stream responses from DeepSeek API (OpenAI-compatible)."""
+    from openai import OpenAI
+
+    client = OpenAI(
+        api_key=api_key,
+        base_url="https://api.deepseek.com",
+    )
+    formatted = [{"role": "system", "content": system_prompt}]
+    for msg in messages:
+        formatted.append({"role": msg["role"], "content": msg["content"]})
+
+    stream = client.chat.completions.create(
+        model=model,
+        messages=formatted,
+        stream=True,
+    )
+    for chunk in stream:
+        if chunk.choices and chunk.choices[0].delta.content:
+            yield chunk.choices[0].delta.content
+
+
+def _stream_qwen(model, api_key, messages, system_prompt):
+    """Stream responses from Qwen/DashScope API (OpenAI-compatible)."""
+    from openai import OpenAI
+
+    client = OpenAI(
+        api_key=api_key,
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+    )
+    formatted = [{"role": "system", "content": system_prompt}]
+    for msg in messages:
+        formatted.append({"role": msg["role"], "content": msg["content"]})
+
+    stream = client.chat.completions.create(
+        model=model,
+        messages=formatted,
+        stream=True,
+    )
+    for chunk in stream:
+        if chunk.choices and chunk.choices[0].delta.content:
+            yield chunk.choices[0].delta.content
+
+
+def _stream_ollama(model, api_key, messages, system_prompt):
+    """Stream responses from Ollama local API."""
+    import json
+    import requests
+
+    # Default Ollama endpoint; `api_key` is overloaded here as a base URL
+    base_url = api_key if api_key else "http://localhost:11434"
+    # Normalize base URL to avoid issues like "//api/chat" and stray whitespace
+    base_url = base_url.strip()
+    if base_url.endswith("/"):
+        base_url = base_url.rstrip("/")
+    endpoint = f"{base_url}/api/chat"
+
+    formatted = [{"role": "system", "content": system_prompt}]
+    for msg in messages:
+        formatted.append({"role": msg["role"], "content": msg["content"]})
+
+    payload = {
+        "model": model,
+        "messages": formatted,
+        "stream": True,
+    }
+
+    response = requests.post(
+        endpoint,
+        json=payload,
+        stream=True,
+        timeout=120,
+    )
+
+    if response.status_code != 200:
+        raise Exception(f"Ollama error: {response.status_code} {response.text}")
+
+    for line in response.iter_lines(decode_unicode=True):
+        if not line:
+            continue
+        try:
+            data = json.loads(line)
+            if "message" in data and "content" in data["message"]:
+                content = data["message"]["content"]
+                if content:
+                    yield content
+        except json.JSONDecodeError:
+            continue
+
+
+def _stream_openai_compatible(model, api_key, messages, system_prompt):
+    """Stream responses from any OpenAI-compatible API.
+    
+    API key format: "BASE_URL|ACTUAL_API_KEY"
+    Example: "https://api.together.xyz/v1|your-api-key-here"
+    """
+    from openai import OpenAI
+
+    # Parse base_url from api_key if it contains |
+    if "|" in api_key:
+        base_url, actual_key = api_key.split("|", 1)
+    else:
+        raise Exception("OpenAI-compatible provider requires API key format: BASE_URL|API_KEY")
+
+    client = OpenAI(
+        api_key=actual_key,
+        base_url=base_url,
+    )
+    formatted = [{"role": "system", "content": system_prompt}]
+    for msg in messages:
+        formatted.append({"role": msg["role"], "content": msg["content"]})
+
+    stream = client.chat.completions.create(
+        model=model,
+        messages=formatted,
+        stream=True,
+    )
+    for chunk in stream:
+        if chunk.choices and chunk.choices[0].delta.content:
+            yield chunk.choices[0].delta.content

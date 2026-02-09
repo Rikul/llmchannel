@@ -178,6 +178,7 @@ class BotManager:
                         Bot.gemini_access_token.isnot(None),
                         Bot.gemini_access_token != ""
                     ),
+                    Bot.provider == "ollama",
                     and_(
                         Bot.api_key.isnot(None),
                         Bot.api_key != ""

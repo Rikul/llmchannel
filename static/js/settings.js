@@ -6,6 +6,10 @@ var Settings = (function () {
         openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
         anthropic: ['claude-sonnet-4-5-20250929', 'claude-haiku-4-20250414', 'claude-opus-4-20250514'],
         gemini: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash'],
+        deepseek: ['deepseek-chat', 'deepseek-reasoner'],
+        qwen: ['qwen-max', 'qwen-plus', 'qwen-turbo', 'qwen2.5-72b-instruct'],
+        ollama: ['llama3.2', 'llama3.1', 'gemma2', 'mistral', 'qwen2.5', 'deepseek-r1'],
+        'openai-compatible': ['meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo', 'meta-llama/Llama-3.3-70B-Instruct-Turbo'],
     };
 
     function open() {
@@ -65,11 +69,17 @@ var Settings = (function () {
         );
 
         // Row 2: Provider + Model
-        var providerOptions = ['openai', 'anthropic', 'gemini'];
+        var providerOptions = ['openai', 'anthropic', 'gemini', 'deepseek', 'qwen', 'ollama', 'openai-compatible'];
         var selectHtml = '<select class="bot-provider">';
         $.each(providerOptions, function (i, p) {
             var sel = (p === bot.provider) ? ' selected' : '';
-            selectHtml += '<option value="' + p + '"' + sel + '>' + p.charAt(0).toUpperCase() + p.slice(1) + '</option>';
+            var displayName = p.charAt(0).toUpperCase() + p.slice(1);
+            if (p === 'openai-compatible') {
+                displayName = 'OpenAI-Compatible';
+            } else if (p === 'deepseek') {
+                displayName = 'DeepSeek';
+            }
+            selectHtml += '<option value="' + p + '"' + sel + '>' + displayName + '</option>';
         });
         selectHtml += '</select>';
 
@@ -90,10 +100,19 @@ var Settings = (function () {
         );
 
         // API Key
+        var apiKeyPlaceholder = 'Enter API key...';
+        var apiKeyType = 'password';
+        if (bot.provider === 'ollama') {
+            apiKeyPlaceholder = 'Optional: http://localhost:11434 (default)';
+            apiKeyType = 'text';
+        } else if (bot.provider === 'openai-compatible') {
+            apiKeyPlaceholder = 'BASE_URL|API_KEY (e.g., https://api.together.xyz/v1|your-key)';
+        }
+        
         $body.append(
             '<div class="field-group">' +
             '<label>API Key</label>' +
-            '<input type="password" class="bot-api-key" value="' + escapeHtml(bot.api_key) + '" placeholder="Enter API key...">' +
+            '<input type="' + apiKeyType + '" class="bot-api-key" value="' + escapeHtml(bot.api_key) + '" placeholder="' + apiKeyPlaceholder + '">' +
             '</div>'
         );
 
@@ -170,6 +189,23 @@ var Settings = (function () {
                 '</datalist>'
             );
 
+            // Update API key placeholder based on provider
+            var $apiKeyInput = $card.find('.bot-api-key');
+            var apiKeyPlaceholder = 'Enter API key...';
+            var apiKeyType = 'password';
+            if (provider === 'ollama') {
+                apiKeyPlaceholder = 'Optional: http://localhost:11434 (default)';
+                apiKeyType = 'text';
+            } else if (provider === 'openai-compatible') {
+                apiKeyPlaceholder = 'BASE_URL|API_KEY (e.g., https://api.together.xyz/v1|your-key)';
+            }
+            $apiKeyInput.attr('placeholder', apiKeyPlaceholder);
+            $apiKeyInput.attr('type', apiKeyType);
+
+            // For providers with different API key semantics, clear any existing (possibly masked) key value
+            if (provider === 'ollama' || provider === 'openai-compatible') {
+                $apiKeyInput.val('');
+            }
             $card.find('.bot-gemini-oauth').toggle(provider === 'gemini');
         });
 
