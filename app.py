@@ -39,10 +39,18 @@ store.set_on_message_finalized(bot_mgr.handle_message_finalized)
 def _ensure_bot_columns():
     inspector = inspect(db.engine)
     columns = [col["name"] for col in inspector.get_columns("bots")]
+    changed = False
     if "gemini_access_token" not in columns:
         db.session.execute(text(
             "ALTER TABLE bots ADD COLUMN gemini_access_token VARCHAR(2048) DEFAULT ''"
         ))
+        changed = True
+    if "gemini_refresh_token" not in columns:
+        db.session.execute(text(
+            "ALTER TABLE bots ADD COLUMN gemini_refresh_token VARCHAR(2048) DEFAULT ''"
+        ))
+        changed = True
+    if changed:
         db.session.commit()
 
 
@@ -145,6 +153,8 @@ def get_bots():
         sb["api_key"] = ("****" + key[-4:]) if key else ""
         token = sb.get("gemini_access_token", "")
         sb["gemini_access_token"] = ("****" + token[-4:]) if token else ""
+        refresh_token = sb.get("gemini_refresh_token", "")
+        sb["gemini_refresh_token"] = ("****" + refresh_token[-4:]) if refresh_token else ""
         safe.append(sb)
     return jsonify(safe)
 
@@ -182,6 +192,10 @@ def update_bot(bot_id):
     # Only update OAuth token if a real (non-masked) value was sent
     if "gemini_access_token" in data and not data["gemini_access_token"].startswith("****"):
         updates["gemini_access_token"] = data["gemini_access_token"]
+
+    # Only update OAuth refresh token if a real (non-masked) value was sent
+    if "gemini_refresh_token" in data and not data["gemini_refresh_token"].startswith("****"):
+        updates["gemini_refresh_token"] = data["gemini_refresh_token"]
 
     bot = bot_mgr.update_bot(bot_id, **updates)
     return jsonify(bot)
@@ -285,11 +299,16 @@ def google_oauth_callback():
 
     flow.fetch_token(authorization_response=request.url)
     token = flow.credentials.token
+    refresh_token = flow.credentials.refresh_token
 
     if not token:
         return jsonify({"error": "Missing access token"}), 400
 
-    bot_mgr.update_bot(bot_id, gemini_access_token=token)
+    bot_mgr.update_bot(
+        bot_id,
+        gemini_access_token=token,
+        gemini_refresh_token=refresh_token or "",
+    )
     return redirect(url_for("index"))
 
 

@@ -1,4 +1,9 @@
+import os
+
+from flask import current_app
+
 from config import OPERATOR_NAME
+from models import Bot, db
 
 
 def _format_channel_history(messages, bot_nickname):
@@ -36,10 +41,19 @@ def _format_channel_history(messages, bot_nickname):
     return merged
 
 
-def stream_response(provider, model, api_key, messages, system_prompt, gemini_access_token=None):
+def stream_response(
+    provider,
+    model,
+    api_key,
+    messages,
+    system_prompt,
+    gemini_access_token=None,
+    gemini_refresh_token=None,
+    bot_id=None,
+):
     """Generator that yields tokens one at a time from the LLM API."""
     if provider == "gemini":
-        if not api_key and not gemini_access_token:
+        if not api_key and not gemini_access_token and not gemini_refresh_token:
             yield "[Error: No API key or Google OAuth configured for this bot]"
             return
     elif provider == "ollama":
@@ -55,7 +69,15 @@ def stream_response(provider, model, api_key, messages, system_prompt, gemini_ac
         elif provider == "anthropic":
             yield from _stream_anthropic(model, api_key, messages, system_prompt)
         elif provider == "gemini":
-            yield from _stream_gemini(model, api_key, messages, system_prompt, gemini_access_token)
+            yield from _stream_gemini(
+                model,
+                api_key,
+                messages,
+                system_prompt,
+                gemini_access_token,
+                gemini_refresh_token,
+                bot_id,
+            )
         elif provider == "deepseek":
             yield from _stream_deepseek(model, api_key, messages, system_prompt)
         elif provider == "qwen":
@@ -111,9 +133,27 @@ def _stream_anthropic(model, api_key, messages, system_prompt):
             yield text
 
 
-def _stream_gemini(model, api_key, messages, system_prompt, gemini_access_token=None):
-    if gemini_access_token and not api_key:
-        yield from _stream_gemini_oauth(model, gemini_access_token, messages, system_prompt)
+def _stream_gemini(
+    model,
+    api_key,
+    messages,
+    system_prompt,
+    gemini_access_token=None,
+    gemini_refresh_token=None,
+    bot_id=None,
+):
+    if (gemini_access_token or gemini_refresh_token) and not api_key:
+        access_token = gemini_access_token
+        if gemini_refresh_token:
+            refreshed_token = _refresh_google_access_token(gemini_refresh_token)
+            if refreshed_token:
+                access_token = refreshed_token
+                _store_refreshed_access_token(bot_id, refreshed_token)
+
+        if not access_token:
+            raise Exception("Missing Google OAuth access token")
+
+        yield from _stream_gemini_oauth(model, access_token, messages, system_prompt)
         return
 
     from google import genai
@@ -146,6 +186,46 @@ def _stream_gemini(model, api_key, messages, system_prompt, gemini_access_token=
     for chunk in response:
         if chunk.text:
             yield chunk.text
+
+
+
+
+def _refresh_google_access_token(refresh_token):
+    from google.auth.transport.requests import Request
+    from google.oauth2.credentials import Credentials
+
+    client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
+    client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
+
+    if not refresh_token or not client_id or not client_secret:
+        return None
+
+    creds = Credentials(
+        token=None,
+        refresh_token=refresh_token,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=client_id,
+        client_secret=client_secret,
+    )
+    creds.refresh(Request())
+    return creds.token
+
+
+def _store_refreshed_access_token(bot_id, access_token):
+    if not bot_id or not access_token:
+        return
+
+    try:
+        app = current_app._get_current_object()
+    except RuntimeError:
+        return
+
+    with app.app_context():
+        bot = db.session.get(Bot, bot_id)
+        if not bot:
+            return
+        bot.gemini_access_token = access_token
+        db.session.commit()
 
 
 def _stream_gemini_oauth(model, access_token, messages, system_prompt):

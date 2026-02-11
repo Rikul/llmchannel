@@ -57,6 +57,7 @@ class BotManager:
                     model=model,
                     api_key=api_key,
                     gemini_access_token="",
+                    gemini_refresh_token="",
                     system_prompt=system_prompt,
                     color=color,
                     enabled=True
@@ -147,6 +148,8 @@ class BotManager:
                     model=bot_config["model"],
                     api_key=bot_config["api_key"],
                     gemini_access_token=bot_config.get("gemini_access_token", ""),
+                    gemini_refresh_token=bot_config.get("gemini_refresh_token", ""),
+                    bot_id=bot_config.get("id"),
                     messages=formatted,
                     system_prompt=bot_config["system_prompt"],
                 ):
@@ -177,6 +180,11 @@ class BotManager:
                         Bot.provider == "gemini",
                         Bot.gemini_access_token.isnot(None),
                         Bot.gemini_access_token != ""
+                    ),
+                    and_(
+                        Bot.provider == "gemini",
+                        Bot.gemini_refresh_token.isnot(None),
+                        Bot.gemini_refresh_token != ""
                     ),
                     Bot.provider == "ollama",
                     and_(
