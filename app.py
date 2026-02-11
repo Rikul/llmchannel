@@ -304,11 +304,13 @@ def google_oauth_callback():
     if not token:
         return jsonify({"error": "Missing access token"}), 400
 
-    bot_mgr.update_bot(
-        bot_id,
-        gemini_access_token=token,
-        gemini_refresh_token=refresh_token or "",
-    )
+    update_fields = {
+        "gemini_access_token": token,
+    }
+    if refresh_token:
+        update_fields["gemini_refresh_token"] = refresh_token
+
+    bot_mgr.update_bot(bot_id, **update_fields)
     return redirect(url_for("index"))
 
 

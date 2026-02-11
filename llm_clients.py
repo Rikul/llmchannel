@@ -207,7 +207,11 @@ def _refresh_google_access_token(refresh_token):
         client_id=client_id,
         client_secret=client_secret,
     )
-    creds.refresh(Request())
+    try:
+        creds.refresh(Request())
+    except Exception:
+        return None
+
     return creds.token
 
 
