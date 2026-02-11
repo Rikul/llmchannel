@@ -209,6 +209,10 @@ def _refresh_google_access_token(refresh_token):
     )
     try:
         creds.refresh(Request())
+        return creds.token
+    except Exception as e:
+        current_app.logger.warning(f"Google OAuth token refresh failed: {e}")
+        return None
     except Exception:
         return None
 
