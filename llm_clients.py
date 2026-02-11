@@ -225,11 +225,18 @@ def _store_refreshed_access_token(bot_id, access_token):
         return
 
     with app.app_context():
-        bot = db.session.get(Bot, bot_id)
-        if not bot:
-            return
-        bot.gemini_access_token = access_token
-        db.session.commit()
+        try:
+            bot = db.session.get(Bot, bot_id)
+            if not bot:
+                return
+            bot.gemini_access_token = access_token
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            app.logger.exception(
+                "Failed to store refreshed Gemini access token for bot_id=%s",
+                bot_id,
+            )
 
 
 def _stream_gemini_oauth(model, access_token, messages, system_prompt):
