@@ -1,5 +1,4 @@
 import os
-import sys
 
 from flask import current_app
 
@@ -94,7 +93,7 @@ def stream_response(
         error_msg = str(e)
         if is_oauth_or_rate_limit_error(error_msg):
             # Log OAuth and rate limit errors to stderr, not to channel
-            print(f"LLM API error ({provider}): {error_msg}", file=sys.stderr)
+            current_app.logger.error(f"LLM API OAuth/rate limit error ({provider}): {error_msg}")
             yield "[Error: Authentication or rate limit issue - check server logs]"
         else:
             yield f"[Error: {error_msg}]"

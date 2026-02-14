@@ -1,5 +1,4 @@
 import copy
-import sys
 import threading
 import time
 import uuid
@@ -160,7 +159,7 @@ class BotManager:
                 error_msg = str(e)
                 if is_oauth_or_rate_limit_error(error_msg):
                     # Log OAuth and rate limit errors to stderr, not to channel
-                    print(f"Bot '{nickname}' error: {error_msg}", file=sys.stderr)
+                    current_app.logger.error(f"Bot '{nickname}' OAuth/rate limit error: {error_msg}")
                     self.message_store.append_to_streaming(msg_id, "[Error: Authentication or rate limit issue - check server logs]")
                 else:
                     self.message_store.append_to_streaming(msg_id, f"[Error: {error_msg}]")
