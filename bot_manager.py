@@ -1,4 +1,5 @@
 import copy
+import sys
 import threading
 import time
 import uuid
@@ -10,6 +11,18 @@ from config import DEFAULT_BOTS
 from models import db, Bot
 
 
+def _is_oauth_or_rate_limit_error(error_msg):
+    """Check if error message is related to OAuth or rate limiting."""
+    error_lower = str(error_msg).lower()
+    oauth_keywords = ['oauth', 'unauthorized', '401', '403', 'authentication']
+    rate_limit_keywords = ['rate limit', 'rate_limit', 'ratelimit', '429', 'quota', 'too many requests']
+    
+    for keyword in oauth_keywords + rate_limit_keywords:
+        if keyword in error_lower:
+            return True
+    return False
+
+
 class BotManager:
     def __init__(self, message_store):
         self.message_store = message_store
@@ -18,7 +31,7 @@ class BotManager:
         self._last_seen_msg_id = {}
         self._in_flight = set()
         self._next_dispatch_time = 0.0
-        self._dispatch_delay = 1.5
+        self._dispatch_delay = 4.0
 
     def load_defaults(self):
         """Load default bots into database if none exist."""
@@ -155,7 +168,13 @@ class BotManager:
                 ):
                     self.message_store.append_to_streaming(msg_id, token)
             except Exception as e:
-                self.message_store.append_to_streaming(msg_id, f"[Error: {str(e)}]")
+                error_msg = str(e)
+                if _is_oauth_or_rate_limit_error(error_msg):
+                    # Log OAuth and rate limit errors to stderr, not to channel
+                    print(f"Bot '{nickname}' error: {error_msg}", file=sys.stderr)
+                    self.message_store.append_to_streaming(msg_id, "[Error: Authentication or rate limit issue - check server logs]")
+                else:
+                    self.message_store.append_to_streaming(msg_id, f"[Error: {error_msg}]")
             finally:
                 self.message_store.finish_streaming(msg_id)
                 with self._lock:
