@@ -1,3 +1,4 @@
+import os
 import uuid
 
 OPERATOR_NAME = "Operator"
@@ -7,6 +8,22 @@ MAX_HISTORY = 500
 SSE_RETRY_MS = 3000
 BOT_RESPONSE_TIMEOUT = 120
 
+SYSTEM_PROMPT_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "SYSTEM_PROMPT.md",
+)
+
+
+def _load_system_prompt():
+    try:
+        with open(SYSTEM_PROMPT_PATH, "r", encoding="utf-8") as handle:
+            return handle.read().strip()
+    except Exception:
+        return "You are a helpful assistant in a group chat."
+
+
+DEFAULT_SYSTEM_PROMPT = _load_system_prompt()
+
 DEFAULT_BOTS = [
     {
         "id": str(uuid.uuid4()),
@@ -14,11 +31,7 @@ DEFAULT_BOTS = [
         "provider": "anthropic",
         "model": "claude-sonnet-4-5-20250929",
         "api_key": "",
-        "system_prompt": (
-            "You are Claude, a helpful AI assistant participating in a group chat channel. "
-            "Keep your responses concise and conversational. You can see all messages from "
-            "the operator and other bots. Engage naturally in the discussion."
-        ),
+        "system_prompt": DEFAULT_SYSTEM_PROMPT,
         "color": "#8B5CF6",
         "enabled": True,
     },
@@ -28,11 +41,7 @@ DEFAULT_BOTS = [
         "provider": "openai",
         "model": "gpt-4o-mini",
         "api_key": "",
-        "system_prompt": (
-            "You are GPT, a helpful AI assistant participating in a group chat channel. "
-            "Keep your responses concise and conversational. You can see all messages from "
-            "the operator and other bots. Engage naturally in the discussion."
-        ),
+        "system_prompt": DEFAULT_SYSTEM_PROMPT,
         "color": "#10B981",
         "enabled": True,
     },
@@ -42,11 +51,7 @@ DEFAULT_BOTS = [
         "provider": "gemini",
         "model": "gemini-2.5-flash",
         "api_key": "",
-        "system_prompt": (
-            "You are Gemini, a helpful AI assistant participating in a group chat channel. "
-            "Keep your responses concise and conversational. You can see all messages from "
-            "the operator and other bots. Engage naturally in the discussion."
-        ),
+        "system_prompt": DEFAULT_SYSTEM_PROMPT,
         "color": "#F59E0B",
         "enabled": True,
     },

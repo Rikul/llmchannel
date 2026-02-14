@@ -13,16 +13,26 @@ def _format_channel_history(messages, bot_nickname):
     Returns list of dicts: {"role": "user"|"assistant", "content": str}
     - Bot's own prior messages -> assistant role
     - Everything else -> user role with [Name]: prefix
+    - Only the last message per sender is included
     """
-    formatted = []
+    last_by_sender = {}
     for msg in messages:
         if msg.get("streaming"):
             continue
-        sender = msg["sender"]
-        content = msg["content"]
+        content = msg.get("content", "")
         if not content.strip():
             continue
+        sender = msg.get("sender")
+        if not sender:
+            continue
+        last_by_sender[sender] = msg
 
+    ordered = sorted(last_by_sender.values(), key=lambda item: item.get("timestamp", 0))
+
+    formatted = []
+    for msg in ordered:
+        sender = msg["sender"]
+        content = msg["content"]
         if sender == bot_nickname:
             formatted.append({"role": "assistant", "content": content})
         else:
@@ -92,11 +102,8 @@ def stream_response(
     except Exception as e:
         error_msg = str(e)
         if is_oauth_or_rate_limit_error(error_msg):
-            # Log OAuth and rate limit errors instead of sending to channel
-            current_app.logger.error(f"LLM API OAuth/rate limit error ({provider}): {error_msg}")
-            yield "[Error: Authentication or rate limit issue - check server logs]"
-        else:
-            yield f"[Error: {error_msg}]"
+            raise
+        yield f"[Error: {error_msg}]"
 
 
 def _stream_openai(model, api_key, messages, system_prompt):

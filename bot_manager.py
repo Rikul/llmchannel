@@ -1,4 +1,5 @@
 import copy
+import sys
 import threading
 import time
 import uuid
@@ -6,7 +7,7 @@ from flask import current_app
 from sqlalchemy import and_, or_
 
 import llm_clients
-from config import DEFAULT_BOTS
+from config import DEFAULT_BOTS, DEFAULT_SYSTEM_PROMPT
 from models import db, Bot
 from utils import is_oauth_or_rate_limit_error
 
@@ -134,6 +135,7 @@ class BotManager:
             msg_id = str(uuid.uuid4())
             nickname = bot_config["nickname"]
             color = bot_config["color"]
+            suppressed = False
 
             self.message_store.start_streaming_message(nickname, color, msg_id)
 
@@ -152,19 +154,23 @@ class BotManager:
                     gemini_refresh_token=bot_config.get("gemini_refresh_token", ""),
                     bot_id=bot_config.get("id"),
                     messages=formatted,
-                    system_prompt=bot_config["system_prompt"],
+                    system_prompt=DEFAULT_SYSTEM_PROMPT,
                 ):
                     self.message_store.append_to_streaming(msg_id, token)
             except Exception as e:
                 error_msg = str(e)
                 if is_oauth_or_rate_limit_error(error_msg):
-                    # Log OAuth and rate limit errors instead of sending to channel
-                    current_app.logger.error(f"Bot '{nickname}' OAuth/rate limit error: {error_msg}")
-                    self.message_store.append_to_streaming(msg_id, "[Error: Authentication or rate limit issue - check server logs]")
+                    print(
+                        f"Bot '{nickname}' OAuth/rate limit error: {error_msg}",
+                        file=sys.stderr,
+                    )
+                    self.message_store.cancel_streaming_message(msg_id)
+                    suppressed = True
                 else:
                     self.message_store.append_to_streaming(msg_id, f"[Error: {error_msg}]")
             finally:
-                self.message_store.finish_streaming(msg_id)
+                if not suppressed:
+                    self.message_store.finish_streaming(msg_id)
                 with self._lock:
                     self._in_flight.discard(bot_config.get("id"))
                     if bot_config.get("id"):

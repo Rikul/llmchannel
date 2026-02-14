@@ -147,6 +147,22 @@ class MessageStore:
                 db.session.rollback()
                 raise Exception(f"Failed to finish streaming message: {e}")
 
+    def cancel_streaming_message(self, msg_id):
+        with self._lock:
+            try:
+                message = Message.query.get(msg_id)
+                if message:
+                    db.session.delete(message)
+                    db.session.commit()
+
+                self._message_cache = [
+                    msg for msg in self._message_cache if msg.get("id") != msg_id
+                ]
+                self._announce("stream_end", {"id": msg_id})
+            except Exception as e:
+                db.session.rollback()
+                raise Exception(f"Failed to cancel streaming message: {e}")
+
     def get_history(self):
         with self._lock:
             # Try to use cache first

@@ -7,7 +7,7 @@ from sqlalchemy import inspect, text
 
 from dotenv import load_dotenv
 
-from config import OPERATOR_NAME, OPERATOR_COLOR
+from config import DEFAULT_SYSTEM_PROMPT, OPERATOR_NAME, OPERATOR_COLOR
 from message_store import MessageStore
 from bot_manager import BotManager
 from models import db
@@ -167,7 +167,7 @@ def add_bot():
         provider=data.get("provider", "openai"),
         model=data.get("model", "gpt-4o-mini"),
         api_key=data.get("api_key", ""),
-        system_prompt=data.get("system_prompt", "You are a helpful assistant in a group chat."),
+        system_prompt=data.get("system_prompt", DEFAULT_SYSTEM_PROMPT),
         color=data.get("color", "#6B7280"),
     )
     return jsonify(bot), 201
