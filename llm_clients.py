@@ -92,7 +92,7 @@ def stream_response(
     except Exception as e:
         error_msg = str(e)
         if is_oauth_or_rate_limit_error(error_msg):
-            # Log OAuth and rate limit errors to stderr, not to channel
+            # Log OAuth and rate limit errors instead of sending to channel
             current_app.logger.error(f"LLM API OAuth/rate limit error ({provider}): {error_msg}")
             yield "[Error: Authentication or rate limit issue - check server logs]"
         else:
