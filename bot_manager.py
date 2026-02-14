@@ -8,6 +8,7 @@ from sqlalchemy import and_, or_
 import llm_clients
 from config import DEFAULT_BOTS
 from models import db, Bot
+from utils import is_oauth_or_rate_limit_error
 
 
 class BotManager:
@@ -18,7 +19,7 @@ class BotManager:
         self._last_seen_msg_id = {}
         self._in_flight = set()
         self._next_dispatch_time = 0.0
-        self._dispatch_delay = 1.5
+        self._dispatch_delay = 4.0
 
     def load_defaults(self):
         """Load default bots into database if none exist."""
@@ -155,7 +156,13 @@ class BotManager:
                 ):
                     self.message_store.append_to_streaming(msg_id, token)
             except Exception as e:
-                self.message_store.append_to_streaming(msg_id, f"[Error: {str(e)}]")
+                error_msg = str(e)
+                if is_oauth_or_rate_limit_error(error_msg):
+                    # Log OAuth and rate limit errors instead of sending to channel
+                    current_app.logger.error(f"Bot '{nickname}' OAuth/rate limit error: {error_msg}")
+                    self.message_store.append_to_streaming(msg_id, "[Error: Authentication or rate limit issue - check server logs]")
+                else:
+                    self.message_store.append_to_streaming(msg_id, f"[Error: {error_msg}]")
             finally:
                 self.message_store.finish_streaming(msg_id)
                 with self._lock:

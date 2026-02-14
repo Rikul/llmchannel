@@ -4,6 +4,7 @@ from flask import current_app
 
 from config import OPERATOR_NAME
 from models import Bot, db
+from utils import is_oauth_or_rate_limit_error
 
 
 def _format_channel_history(messages, bot_nickname):
@@ -89,7 +90,13 @@ def stream_response(
         else:
             yield f"[Error: Unknown provider '{provider}']"
     except Exception as e:
-        yield f"[Error: {str(e)}]"
+        error_msg = str(e)
+        if is_oauth_or_rate_limit_error(error_msg):
+            # Log OAuth and rate limit errors instead of sending to channel
+            current_app.logger.error(f"LLM API OAuth/rate limit error ({provider}): {error_msg}")
+            yield "[Error: Authentication or rate limit issue - check server logs]"
+        else:
+            yield f"[Error: {error_msg}]"
 
 
 def _stream_openai(model, api_key, messages, system_prompt):
