@@ -5,18 +5,7 @@ from flask import current_app
 
 from config import OPERATOR_NAME
 from models import Bot, db
-
-
-def _is_oauth_or_rate_limit_error(error_msg):
-    """Check if error message is related to OAuth or rate limiting."""
-    error_lower = str(error_msg).lower()
-    oauth_keywords = ['oauth', 'unauthorized', '401', '403', 'authentication']
-    rate_limit_keywords = ['rate limit', 'rate_limit', 'ratelimit', '429', 'quota', 'too many requests']
-    
-    for keyword in oauth_keywords + rate_limit_keywords:
-        if keyword in error_lower:
-            return True
-    return False
+from utils import is_oauth_or_rate_limit_error
 
 
 def _format_channel_history(messages, bot_nickname):
@@ -103,7 +92,7 @@ def stream_response(
             yield f"[Error: Unknown provider '{provider}']"
     except Exception as e:
         error_msg = str(e)
-        if _is_oauth_or_rate_limit_error(error_msg):
+        if is_oauth_or_rate_limit_error(error_msg):
             # Log OAuth and rate limit errors to stderr, not to channel
             print(f"LLM API error ({provider}): {error_msg}", file=sys.stderr)
             yield "[Error: Authentication or rate limit issue - check server logs]"
