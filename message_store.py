@@ -7,7 +7,7 @@ from threading import Lock
 from sqlalchemy import func
 
 from config import MAX_HISTORY
-from models import db, Conversation, Message
+from models import db, Conversation, ConversationBot, Message
 
 TITLE_MAX_CHARS = 60
 
@@ -32,9 +32,17 @@ class MessageStore:
         self._message_cache = []  # Live conversation, oldest first
         self._conversation_id = None
         self._on_message_finalized = None
+        self._snapshot_provider = None
 
     def set_on_message_finalized(self, callback):
         self._on_message_finalized = callback
+
+    def set_snapshot_provider(self, callback):
+        """Set a callable returning what to record when a conversation is archived.
+
+        It must return {"bots": [bot dicts], "system_prompt": str, "bot_chain_limit": int}.
+        """
+        self._snapshot_provider = callback
 
     # ── Conversations ────────────────────────────────────────────────
 
@@ -96,6 +104,7 @@ class MessageStore:
                 self._freeze_streaming_messages()
                 if current is not None:
                     current.archived_at = time.time()
+                    self._record_snapshot(current)
                 conv = self._create_conversation()
                 db.session.commit()
 
@@ -122,12 +131,23 @@ class MessageStore:
             return result
 
     def get_conversation(self, conversation_id):
+        """One conversation; archived ones include the bot profiles and settings they used."""
         with self._lock:
             conv = db.session.get(Conversation, conversation_id)
             if conv is None:
                 return None
             count = Message.query.filter_by(conversation_id=conversation_id).count()
-            return conv.to_dict(message_count=count)
+            data = conv.to_dict(message_count=count)
+            if conv.archived_at is not None:
+                bots = (
+                    ConversationBot.query.filter_by(conversation_id=conversation_id)
+                    .order_by(ConversationBot.participated.desc(), ConversationBot.nickname)
+                    .all()
+                )
+                data["bots"] = [b.to_dict() for b in bots]
+                data["system_prompt"] = conv.system_prompt
+                data["bot_chain_limit"] = conv.bot_chain_limit
+            return data
 
     def get_conversation_messages(self, conversation_id):
         """All messages of any conversation (live or archived), oldest first."""
@@ -163,6 +183,9 @@ class MessageStore:
                 Message.query.filter_by(conversation_id=conversation_id).delete(
                     synchronize_session=False
                 )
+                ConversationBot.query.filter_by(conversation_id=conversation_id).delete(
+                    synchronize_session=False
+                )
                 db.session.delete(conv)
                 db.session.commit()
             except Exception as e:
@@ -170,6 +193,34 @@ class MessageStore:
                 raise Exception(f"Failed to delete conversation: {e}")
         self._announce("conversations_updated", {})
         return True
+
+    def _record_snapshot(self, conv):
+        """Store the bot profiles and channel settings in use as `conv` is archived."""
+        if self._snapshot_provider is None:
+            return
+        snapshot = self._snapshot_provider()
+        conv.system_prompt = snapshot.get("system_prompt")
+        conv.bot_chain_limit = snapshot.get("bot_chain_limit")
+
+        senders = {
+            sender for (sender,) in db.session.query(Message.sender)
+            .filter_by(conversation_id=conv.id, msg_type="bot")
+            .distinct()
+        }
+        for bot in snapshot.get("bots", []):
+            db.session.add(ConversationBot(
+                conversation_id=conv.id,
+                bot_id=bot["id"],
+                nickname=bot["nickname"],
+                base_url=bot.get("base_url") or "",
+                model=bot.get("model") or "",
+                persona=bot.get("persona") or "",
+                temperature=bot.get("temperature"),
+                max_tokens=bot.get("max_tokens"),
+                color=bot.get("color") or "#6B7280",
+                enabled=bool(bot.get("enabled")),
+                participated=bot["nickname"] in senders,
+            ))
 
     def _create_conversation(self):
         now = time.time()

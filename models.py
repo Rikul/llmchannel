@@ -44,6 +44,9 @@ class Conversation(db.Model):
     created_at = db.Column(db.Float, nullable=False)
     updated_at = db.Column(db.Float, nullable=False)
     archived_at = db.Column(db.Float, nullable=True, index=True)
+    # Channel settings in effect when the conversation was archived (null for older archives)
+    system_prompt = db.Column(db.Text, nullable=True)
+    bot_chain_limit = db.Column(db.Integer, nullable=True)
 
     def to_dict(self, message_count=None):
         """Convert conversation to dictionary."""
@@ -58,6 +61,39 @@ class Conversation(db.Model):
         if message_count is not None:
             data['message_count'] = message_count
         return data
+
+
+class ConversationBot(db.Model):
+    """A bot's profile as it was when its conversation was archived. Never holds API keys."""
+    __tablename__ = 'conversation_bots'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    conversation_id = db.Column(db.String(36), nullable=False, index=True)
+    bot_id = db.Column(db.String(36), nullable=False)
+    nickname = db.Column(db.String(100), nullable=False)
+    base_url = db.Column(db.String(500), nullable=False, default='')
+    model = db.Column(db.String(200), nullable=False)
+    persona = db.Column(db.Text, nullable=False, default='')
+    temperature = db.Column(db.Float, nullable=True)
+    max_tokens = db.Column(db.Integer, nullable=True)
+    color = db.Column(db.String(20), nullable=False)
+    enabled = db.Column(db.Boolean, nullable=False)
+    participated = db.Column(db.Boolean, nullable=False, default=False)
+
+    def to_dict(self):
+        """Convert snapshot to dictionary."""
+        return {
+            'bot_id': self.bot_id,
+            'nickname': self.nickname,
+            'base_url': self.base_url,
+            'model': self.model,
+            'persona': self.persona,
+            'temperature': self.temperature,
+            'max_tokens': self.max_tokens,
+            'color': self.color,
+            'enabled': self.enabled,
+            'participated': self.participated,
+        }
 
 
 class Message(db.Model):

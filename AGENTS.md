@@ -144,3 +144,5 @@ All messages are stored in SQLite (`messages.conversation_id` → `conversations
 - "New conversation" archives the live one; bot replies still streaming are saved as-is and
   their threads stop. Archived conversations are read-only via `/api/conversations/<id>`
 - Resuming an archived conversation would mean making it live again and loading its cache
+- Archiving snapshots every bot profile into `conversation_bots` (no API keys) and the main
+  system prompt / reply limit onto the conversation row, for reference

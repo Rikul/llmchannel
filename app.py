@@ -38,6 +38,7 @@ store = MessageStore()
 settings = ChannelSettings()
 bot_mgr = BotManager(store, settings)
 store.set_on_message_finalized(bot_mgr.handle_message_finalized)
+store.set_snapshot_provider(lambda: {"bots": bot_mgr.get_all_bots(), **settings.get_all()})
 
 MAX_SYSTEM_PROMPT_CHARS = 20000
 MAX_PERSONA_CHARS = 8000
@@ -152,6 +153,19 @@ def _migrate_message_conversations():
     db.session.commit()
 
 
+def _migrate_conversation_settings():
+    """Add the archived-settings columns to conversations tables created before them."""
+    inspector = inspect(db.engine)
+    if "conversations" not in inspector.get_table_names():
+        return
+    columns = {col["name"] for col in inspector.get_columns("conversations")}
+    if "system_prompt" not in columns:
+        db.session.execute(text("ALTER TABLE conversations ADD COLUMN system_prompt TEXT"))
+    if "bot_chain_limit" not in columns:
+        db.session.execute(text("ALTER TABLE conversations ADD COLUMN bot_chain_limit INTEGER"))
+    db.session.commit()
+
+
 # Create tables and load defaults
 with app.app_context():
     # Ensure instance directory exists
@@ -159,6 +173,7 @@ with app.app_context():
     try:
         _migrate_legacy_bots()
         _migrate_message_conversations()
+        _migrate_conversation_settings()
         db.create_all()
         store.load_active_conversation()
         settings.load()

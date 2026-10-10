@@ -164,12 +164,63 @@ var ChatApp = (function () {
         $('#conversation-title').text(conversationTitle(conv));
     }
 
+    function renderBotSnapshot(conv) {
+        var $panel = $('#archive-bots').empty();
+        var bots = conv.bots || [];
+
+        if (!bots.length && !conv.system_prompt) {
+            $panel.append($('<div class="snapshot-bot-meta"></div>').text(
+                'No bot profiles were saved with this conversation ' +
+                '(it was archived before profiles were recorded).'
+            ));
+            return;
+        }
+
+        if (conv.system_prompt) {
+            var limit = (conv.bot_chain_limit === null || conv.bot_chain_limit === undefined) ?
+                '' : ' · bot-to-bot reply limit ' + conv.bot_chain_limit;
+            $panel.append(
+                $('<details class="snapshot-prompt"></details>')
+                    .append($('<summary></summary>').text('Main system prompt' + limit))
+                    .append($('<pre></pre>').text(conv.system_prompt))
+            );
+        }
+
+        var $grid = $('<div class="archive-bots-grid"></div>');
+        $.each(bots, function (i, bot) {
+            var settings = [];
+            if (bot.temperature !== null && bot.temperature !== undefined) {
+                settings.push('temperature ' + bot.temperature);
+            }
+            if (bot.max_tokens) settings.push('max tokens ' + bot.max_tokens);
+
+            var $name = $('<div class="snapshot-bot-name"></div>')
+                .css('color', bot.color)
+                .text(bot.nickname);
+            if (bot.participated) $name.append('<span class="snapshot-badge">spoke</span>');
+            if (!bot.enabled) $name.append('<span class="snapshot-badge">off</span>');
+
+            var $card = $('<div class="snapshot-bot"></div>')
+                .append($name)
+                .append($('<div class="snapshot-bot-meta"></div>')
+                    .text(bot.model + ' @ ' + endpointHost(bot.base_url)));
+            if (settings.length) {
+                $card.append($('<div class="snapshot-bot-meta"></div>').text(settings.join(' · ')));
+            }
+            $card.append($('<div class="snapshot-persona"></div>')
+                .text(bot.persona || '(no persona)'));
+            $grid.append($card);
+        });
+        $panel.append($grid);
+    }
+
     function viewConversation(conversationId) {
         $.getJSON('/api/conversations/' + conversationId, function (conv) {
             state.viewing = conv;
             state.messages = conv.messages || [];
             $('#archive-banner').css('display', 'flex');
             $('#archive-banner-title').text(conversationTitle(conv));
+            renderBotSnapshot(conv);
             $('#input-area').hide();
             renderAllMessages();
             refreshConversations();
@@ -179,6 +230,7 @@ var ChatApp = (function () {
     function showLive() {
         state.viewing = null;
         $('#archive-banner').hide();
+        $('#archive-bots').hide();
         $('#input-area').show();
         loadLive();
         refreshConversations();
@@ -420,6 +472,9 @@ var ChatApp = (function () {
         $('#btn-new-conversation').on('click', startNewConversation);
         $('#btn-archive-back').on('click', showLive);
         $('#btn-archive-rename').on('click', renameViewed);
+        $('#btn-archive-bots').on('click', function () {
+            $('#archive-bots').slideToggle(150);
+        });
         $('#btn-archive-delete').on('click', deleteViewed);
     }
 
