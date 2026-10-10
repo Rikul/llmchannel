@@ -273,6 +273,78 @@ body {
     gap: 8px;
 }
 
+/* ── Conversations ──────────────────────────────────────────────────── */
+
+.conversation-title {
+    margin-right: 16px;
+    font-weight: 600;
+    font-size: 0.875rem;
+    max-width: 50vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.conversation-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 6px 10px;
+    border-radius: 6px;
+    background: none;
+    border: none;
+    color: var(--text-primary);
+    font-family: inherit;
+    cursor: pointer;
+    transition: background-color 0.15s;
+}
+
+.conversation-item:hover {
+    background-color: var(--bg-hover);
+}
+
+.conversation-item.active {
+    background-color: rgba(127, 127, 127, 0.16);
+}
+
+.conversation-item-title {
+    font-size: 0.8125rem;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.conversation-item-meta {
+    font-size: 0.6875rem;
+    color: var(--text-muted);
+}
+
+.archive-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border-color);
+    background-color: var(--bg-secondary);
+}
+
+.archive-banner-label {
+    font-size: 0.6875rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+}
+
+.archive-banner-title {
+    font-weight: 600;
+    font-size: 0.875rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 /* ── Bot Config Card ────────────────────────────────────────────────── */
 
 .bot-card {

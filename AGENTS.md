@@ -133,3 +133,12 @@ LM Studio, llama.cpp, vLLM, OpenAI, ...). There are no provider-specific clients
   `{{OPERATOR_NAME}}`, `{{PARTICIPANTS}}`, `{{PERSONA}}`
 - Bots reply `[PASS]` to stay silent; `bot_manager._ReplyFilter` drops those messages
 - Add endpoint presets to `ENDPOINT_PRESETS` in `config.py`
+
+## Conversations
+
+All messages are stored in SQLite (`messages.conversation_id` → `conversations`).
+- Exactly one conversation is live (`archived_at IS NULL`); only it accepts messages and is
+  cached in memory by `MessageStore` (last `MAX_HISTORY` messages, never deleted from disk)
+- "New conversation" archives the live one; bot replies still streaming are saved as-is and
+  their threads stop. Archived conversations are read-only via `/api/conversations/<id>`
+- Resuming an archived conversation would mean making it live again and loading its cache

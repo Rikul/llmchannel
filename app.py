@@ -100,13 +100,30 @@ def _migrate_legacy_bots():
     app.logger.info(f"Migrated {len(rows)} bot(s) to OpenAI-compatible endpoints")
 
 
+def _migrate_message_conversations():
+    """Add messages.conversation_id to databases created before conversations existed."""
+    inspector = inspect(db.engine)
+    if "messages" not in inspector.get_table_names():
+        return
+    columns = {col["name"] for col in inspector.get_columns("messages")}
+    if "conversation_id" in columns:
+        return
+    db.session.execute(text("ALTER TABLE messages ADD COLUMN conversation_id VARCHAR(36)"))
+    db.session.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_messages_conversation_id ON messages (conversation_id)"
+    ))
+    db.session.commit()
+
+
 # Create tables and load defaults
 with app.app_context():
     # Ensure instance directory exists
     os.makedirs(os.path.join(basedir, "instance"), exist_ok=True)
     try:
         _migrate_legacy_bots()
+        _migrate_message_conversations()
         db.create_all()
+        store.load_active_conversation()
         settings.load()
         bot_mgr.load_defaults()
     except Exception as e:
@@ -231,9 +248,46 @@ def send_message():
     return jsonify(msg), 201
 
 
-@app.route("/api/clear", methods=["POST"])
-def clear_messages():
-    store.clear()
+# ── Conversations API ────────────────────────────────────────────────────
+
+@app.route("/api/conversations")
+def list_conversations():
+    return jsonify(store.list_conversations())
+
+
+@app.route("/api/conversations", methods=["POST"])
+def new_conversation():
+    """Archive the live conversation and start a new one."""
+    return jsonify(store.new_conversation()), 201
+
+
+@app.route("/api/conversations/<conversation_id>")
+def get_conversation(conversation_id):
+    conv = store.get_conversation(conversation_id)
+    if not conv:
+        return jsonify({"error": "Conversation not found"}), 404
+    conv["messages"] = store.get_conversation_messages(conversation_id)
+    return jsonify(conv)
+
+
+@app.route("/api/conversations/<conversation_id>", methods=["PUT"])
+def rename_conversation(conversation_id):
+    data = request.get_json(force=True)
+    title = " ".join(str(data.get("title") or "").split())[:200]
+    conv = store.rename_conversation(conversation_id, title)
+    if not conv:
+        return jsonify({"error": "Conversation not found"}), 404
+    return jsonify(conv)
+
+
+@app.route("/api/conversations/<conversation_id>", methods=["DELETE"])
+def delete_conversation(conversation_id):
+    try:
+        deleted = store.delete_conversation(conversation_id)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    if not deleted:
+        return jsonify({"error": "Conversation not found"}), 404
     return jsonify({"ok": True})
 
 

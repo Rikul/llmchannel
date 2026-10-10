@@ -35,11 +35,37 @@ class Bot(db.Model):
         }
 
 
+class Conversation(db.Model):
+    """A chat session. Exactly one is live (archived_at is None); the rest are archived."""
+    __tablename__ = 'conversations'
+
+    id = db.Column(db.String(36), primary_key=True)
+    title = db.Column(db.String(200), nullable=False, default='')
+    created_at = db.Column(db.Float, nullable=False)
+    updated_at = db.Column(db.Float, nullable=False)
+    archived_at = db.Column(db.Float, nullable=True, index=True)
+
+    def to_dict(self, message_count=None):
+        """Convert conversation to dictionary."""
+        data = {
+            'id': self.id,
+            'title': self.title,
+            'created_at': self.created_at,
+            'updated_at': self.updated_at,
+            'archived_at': self.archived_at,
+            'archived': self.archived_at is not None,
+        }
+        if message_count is not None:
+            data['message_count'] = message_count
+        return data
+
+
 class Message(db.Model):
     """Model for chat messages."""
     __tablename__ = 'messages'
 
     id = db.Column(db.String(36), primary_key=True)
+    conversation_id = db.Column(db.String(36), nullable=True, index=True)
     sender = db.Column(db.String(100), nullable=False)
     content = db.Column(db.Text, nullable=False)
     timestamp = db.Column(db.Float, nullable=False, index=True)
@@ -51,6 +77,7 @@ class Message(db.Model):
         """Convert message to dictionary."""
         return {
             'id': self.id,
+            'conversation_id': self.conversation_id,
             'sender': self.sender,
             'content': self.content,
             'timestamp': self.timestamp,

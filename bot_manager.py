@@ -176,7 +176,7 @@ class BotManager:
         return self.update_bot(bot_id, enabled=bool(enabled))
 
     def _run_bot_response(self, bot_config, trigger_msg_id, delay, participants,
-                          round_id, counted):
+                          round_id, counted, conversation_id):
         # Ensure Flask app context for database operations in thread
         with self._app.app_context():
             if delay > 0:
@@ -185,8 +185,16 @@ class BotManager:
             nickname = bot_config["nickname"]
             reply = _ReplyFilter(nickname)
             cancelled = False
+            abandoned = False
 
-            self.message_store.start_streaming_message(nickname, bot_config["color"], msg_id)
+            # The operator may have started a new conversation while this reply was queued
+            started = self.message_store.start_streaming_message(
+                nickname, bot_config["color"], msg_id, conversation_id=conversation_id
+            )
+            if started is None:
+                with self._lock:
+                    self._in_flight.discard(bot_config.get("id"))
+                return
 
             history = self.message_store.get_history()
             # Exclude the streaming placeholder we just created
@@ -210,13 +218,18 @@ class BotManager:
                     temperature=bot_config.get("temperature"),
                     max_tokens=bot_config.get("max_tokens"),
                 ):
+                    # Stop paying for tokens once the conversation has been archived
+                    if not self.message_store.is_streaming(msg_id):
+                        abandoned = True
+                        break
                     text = reply.feed(token)
                     if text:
                         self.message_store.append_to_streaming(msg_id, text)
-                tail = reply.finish()
-                if tail:
-                    self.message_store.append_to_streaming(msg_id, tail)
-                cancelled = reply.passed
+                if not abandoned:
+                    tail = reply.finish()
+                    if tail:
+                        self.message_store.append_to_streaming(msg_id, tail)
+                    cancelled = reply.passed
             except Exception as e:
                 error_msg = str(e)
                 if is_oauth_or_rate_limit_error(error_msg):
@@ -304,7 +317,10 @@ class BotManager:
 
                 t = threading.Thread(
                     target=self._run_bot_response,
-                    args=(bot, msg_id, delay, participants, self._round, not is_operator),
+                    args=(
+                        bot, msg_id, delay, participants, self._round, not is_operator,
+                        message.get("conversation_id"),
+                    ),
                     daemon=True,
                 )
                 t.start()

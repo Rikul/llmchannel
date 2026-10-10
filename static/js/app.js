@@ -6,6 +6,8 @@ var ChatApp = (function () {
         streamingMessages: {},  // msg_id -> true (DOM elements found by id)
         pendingStreams: {},
         evtSource: null,
+        liveConversation: null,  // the conversation that accepts messages
+        viewing: null,           // archived conversation shown read-only, or null
     };
 
     // ── Helpers ──────────────────────────────────────────────────────
@@ -15,7 +17,21 @@ var ChatApp = (function () {
         return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     }
 
+    function formatDate(ts) {
+        var d = new Date(ts * 1000);
+        var sameDay = d.toDateString() === new Date().toDateString();
+        return sameDay ?
+            d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) :
+            d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+
+    function conversationTitle(conv) {
+        if (!conv) return '#llm-channel';
+        return conv.title || ('Untitled · ' + formatDate(conv.created_at));
+    }
+
     function escapeHtml(text) {
+        if (text === null || text === undefined) return '';
         var div = document.createElement('div');
         div.appendChild(document.createTextNode(text));
         return div.innerHTML;
@@ -85,8 +101,133 @@ var ChatApp = (function () {
         $container.empty();
         $.each(state.messages, function (i, msg) {
             $container.append(createMessageHtml(msg));
+            if (msg.streaming) {
+                $('#content-' + msg.id).addClass('streaming-cursor');
+                state.streamingMessages[msg.id] = true;
+            }
         });
+        if (!state.messages.length) {
+            $container.append(
+                '<div class="msg-system" style="padding: 24px 16px;">' +
+                (state.viewing ? 'This conversation has no messages.' :
+                    'New conversation. Say something to get the bots going.') +
+                '</div>'
+            );
+        }
         scrollToBottom(true);
+    }
+
+    // ── Conversations ───────────────────────────────────────────────
+
+    function loadLive() {
+        state.streamingMessages = {};
+        state.pendingStreams = {};
+        $.getJSON('/api/messages', function (msgs) {
+            state.messages = msgs;
+            if (!state.viewing) renderAllMessages();
+        });
+    }
+
+    function refreshConversations() {
+        $.getJSON('/api/conversations', function (convs) {
+            var $list = $('#conversation-list');
+            $list.empty();
+            $.each(convs, function (i, conv) {
+                if (!conv.archived) {
+                    state.liveConversation = conv;
+                }
+                var isActive = state.viewing ? state.viewing.id === conv.id : !conv.archived;
+                var meta = conv.archived ?
+                    formatDate(conv.archived_at) + ' · ' + conv.message_count + ' msgs' :
+                    'live · ' + conv.message_count + ' msgs';
+                var $item = $('<button class="conversation-item"></button>')
+                    .toggleClass('active', isActive)
+                    .attr('data-conversation-id', conv.id)
+                    .append($('<div class="conversation-item-title"></div>')
+                        .text(conv.archived ? conversationTitle(conv) : '● Live chat'))
+                    .append($('<div class="conversation-item-meta"></div>').text(meta));
+                $item.on('click', function () {
+                    if (conv.archived) {
+                        viewConversation(conv.id);
+                    } else {
+                        showLive();
+                    }
+                });
+                $list.append($item);
+            });
+            updateHeader();
+        });
+    }
+
+    function updateHeader() {
+        var conv = state.viewing || state.liveConversation;
+        $('#conversation-title').text(conversationTitle(conv));
+    }
+
+    function viewConversation(conversationId) {
+        $.getJSON('/api/conversations/' + conversationId, function (conv) {
+            state.viewing = conv;
+            state.messages = conv.messages || [];
+            $('#archive-banner').css('display', 'flex');
+            $('#archive-banner-title').text(conversationTitle(conv));
+            $('#input-area').hide();
+            renderAllMessages();
+            refreshConversations();
+        });
+    }
+
+    function showLive() {
+        state.viewing = null;
+        $('#archive-banner').hide();
+        $('#input-area').show();
+        loadLive();
+        refreshConversations();
+        $('#chat-input').trigger('focus');
+    }
+
+    function startNewConversation() {
+        if (!confirm('Archive this conversation and start a new one?')) return;
+        $.ajax({
+            url: '/api/conversations',
+            method: 'POST',
+            error: function () {
+                alert('Could not start a new conversation.');
+            },
+        });
+        // Every open tab switches when the server sends conversation_changed
+    }
+
+    function renameViewed() {
+        if (!state.viewing) return;
+        var title = prompt('Conversation name:', state.viewing.title || '');
+        if (title === null) return;
+        var id = state.viewing.id;
+        $.ajax({
+            url: '/api/conversations/' + id,
+            method: 'PUT',
+            contentType: 'application/json',
+            data: JSON.stringify({ title: title }),
+            success: function (conv) {
+                if (state.viewing && state.viewing.id === id) {
+                    state.viewing.title = conv.title;
+                    $('#archive-banner-title').text(conversationTitle(conv));
+                }
+                refreshConversations();
+            },
+        });
+    }
+
+    function deleteViewed() {
+        if (!state.viewing) return;
+        if (!confirm('Permanently delete "' + conversationTitle(state.viewing) + '"?')) return;
+        $.ajax({
+            url: '/api/conversations/' + state.viewing.id,
+            method: 'DELETE',
+            success: showLive,
+            error: function () {
+                alert('Could not delete the conversation.');
+            },
+        });
     }
 
     // ── SSE Connection ──────────────────────────────────────────────
@@ -99,23 +240,32 @@ var ChatApp = (function () {
         var evtSource = new EventSource('/api/stream');
         state.evtSource = evtSource;
 
+        // While an archived conversation is open, live traffic is ignored here and
+        // the live chat is re-fetched on the way back (see showLive).
+
         evtSource.addEventListener('new_message', function (e) {
             var msg = JSON.parse(e.data);
+            if (msg.type === 'operator') refreshConversations();
+            if (state.viewing) return;
+            if (!state.messages.length) $('#messages').empty();
             state.messages.push(msg);
             appendMessage(msg);
         });
 
         evtSource.addEventListener('stream_start', function (e) {
+            if (state.viewing) return;
             var msg = JSON.parse(e.data);
             state.pendingStreams[msg.id] = msg;
         });
 
         evtSource.addEventListener('stream_token', function (e) {
+            if (state.viewing) return;
             var data = JSON.parse(e.data);
             var $content = $('#content-' + data.id);
             if (!$content.length) {
                 var pending = state.pendingStreams[data.id];
                 if (pending) {
+                    if (!state.messages.length) $('#messages').empty();
                     pending.content = data.token;
                     state.messages.push(pending);
                     appendMessage(pending);
@@ -135,6 +285,7 @@ var ChatApp = (function () {
         });
 
         evtSource.addEventListener('stream_end', function (e) {
+            if (state.viewing) return;
             var data = JSON.parse(e.data);
             $('#content-' + data.id).removeClass('streaming-cursor');
             delete state.streamingMessages[data.id];
@@ -150,14 +301,31 @@ var ChatApp = (function () {
             }
         });
 
-        evtSource.addEventListener('clear', function () {
-            state.messages = [];
-            state.streamingMessages = {};
-            $('#messages').empty();
+        evtSource.addEventListener('conversation_changed', function (e) {
+            state.liveConversation = JSON.parse(e.data);
+            if (state.viewing) {
+                refreshConversations();
+            } else {
+                showLive();
+            }
         });
 
+        evtSource.addEventListener('conversations_updated', function () {
+            refreshConversations();
+        });
+
+        var lostConnection = false;
         evtSource.onerror = function () {
+            lostConnection = true;
             console.warn('SSE connection lost, reconnecting...');
+        };
+        evtSource.onopen = function () {
+            // Events may have been missed while disconnected; resync
+            if (lostConnection) {
+                lostConnection = false;
+                if (!state.viewing) loadLive();
+                refreshConversations();
+            }
         };
     }
 
@@ -227,11 +395,9 @@ var ChatApp = (function () {
     // ── Init ────────────────────────────────────────────────────────
 
     function init() {
-        // Load existing messages
-        $.getJSON('/api/messages', function (msgs) {
-            state.messages = msgs;
-            renderAllMessages();
-        });
+        // Load the live conversation and the archive list
+        loadLive();
+        refreshConversations();
 
         // Load sidebar
         refreshSidebar();
@@ -250,12 +416,11 @@ var ChatApp = (function () {
             }
         });
 
-        // Clear chat button
-        $('#btn-clear').on('click', function () {
-            if (confirm('Clear all messages?')) {
-                $.post('/api/clear');
-            }
-        });
+        // Conversation controls
+        $('#btn-new-conversation').on('click', startNewConversation);
+        $('#btn-archive-back').on('click', showLive);
+        $('#btn-archive-rename').on('click', renameViewed);
+        $('#btn-archive-delete').on('click', deleteViewed);
     }
 
     // ── Public API ──────────────────────────────────────────────────
