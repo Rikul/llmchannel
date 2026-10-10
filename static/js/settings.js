@@ -6,6 +6,7 @@ var Settings = (function () {
     var defaultPrompt = '';
     var expanded = {};         // bot id -> true while its card is open
     var knownNicknames = [];
+    var modelCache = {};       // normalized endpoint URL -> { models, fetched_at }
 
     var modelHints = {
         'openrouter.ai': [
@@ -17,8 +18,8 @@ var Settings = (function () {
 
     function open() {
         $('#settings-modal').css('display', 'flex');
-        // Bot cards read the endpoint presets, so render them once settings have loaded
-        loadChannelSettings().always(loadBots);
+        // Bot cards read the presets and cached model lists, so render them once both load
+        $.when(loadChannelSettings(), loadModelCache()).always(loadBots);
     }
 
     function close() {
@@ -58,6 +59,12 @@ var Settings = (function () {
 
     // ── Bot Cards ───────────────────────────────────────────────────
 
+    function loadModelCache() {
+        return $.getJSON('/api/models', function (cache) {
+            modelCache = cache || {};
+        });
+    }
+
     function loadBots() {
         $.getJSON('/api/bots', function (bots) {
             var $list = $('#bot-config-list');
@@ -77,12 +84,46 @@ var Settings = (function () {
         return label;
     }
 
+    // Must match llm_clients.normalize_base_url on the server
+    function normalizeUrl(url) {
+        var match = /^([a-z][a-z0-9+.\-]*):\/\/([^\/?#]*)([^?#]*)/i.exec($.trim(url || ''));
+        if (!match) return '';
+        return match[1].toLowerCase() + '://' + match[2].toLowerCase() +
+            match[3].replace(/\/+$/, '');
+    }
+
     function hintsFor(baseUrl) {
+        var cached = modelCache[normalizeUrl(baseUrl)];
+        if (cached) return cached.models;
         var hints = [];
         $.each(modelHints, function (host, models) {
             if ((baseUrl || '').indexOf(host) !== -1) hints = models;
         });
         return hints;
+    }
+
+    function modelSourceText(baseUrl) {
+        var cached = modelCache[normalizeUrl(baseUrl)];
+        if (!cached) {
+            return 'Suggestions only. Click Fetch models to load this endpoint\'s full list.';
+        }
+        var fetched = new Date(cached.fetched_at * 1000).toLocaleString([], {
+            month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+        });
+        return cached.models.length + ' models from this endpoint, fetched ' + fetched +
+            '. Fetch again to refresh.';
+    }
+
+    // Refresh the model list of every card on the given endpoint
+    function refreshModelLists(baseUrl) {
+        var key = normalizeUrl(baseUrl);
+        $('#bot-config-list .bot-card').each(function () {
+            var $card = $(this);
+            var url = $card.find('.bot-base-url').val();
+            if (normalizeUrl(url) !== key) return;
+            $card.find('.bot-model-list').html(buildOptions(hintsFor(url)));
+            $card.find('.bot-model-source').text(modelSourceText(url));
+        });
     }
 
     function buildOptions(values) {
@@ -173,8 +214,10 @@ var Settings = (function () {
             '<button class="btn btn-ghost btn-sm btn-fetch-models" ' +
             'title="Ask the endpoint which models it serves">Fetch models</button>' +
             '</div>' +
-            '<datalist id="' + modelListId + '">' + buildOptions(hintsFor(bot.base_url)) +
-            '</datalist>' +
+            '<datalist id="' + modelListId + '" class="bot-model-list">' +
+            buildOptions(hintsFor(bot.base_url)) + '</datalist>' +
+            '<div class="field-hint bot-model-source">' +
+            escapeHtml(modelSourceText(bot.base_url)) + '</div>' +
             '</div>' +
 
             // Temperature + Max tokens
@@ -226,9 +269,11 @@ var Settings = (function () {
             setEnabled(bot.id, $(this).is(':checked'));
         });
 
-        // Endpoint change -> refresh static model hints
+        // Endpoint change -> show that endpoint's cached models (or the static hints)
         $card.find('.bot-base-url').on('change', function () {
-            $card.find('#' + modelListId).html(buildOptions(hintsFor($(this).val())));
+            var url = $(this).val();
+            $card.find('.bot-model-list').html(buildOptions(hintsFor(url)));
+            $card.find('.bot-model-source').text(modelSourceText(url));
         });
 
         $card.find('.btn-fetch-models').on('click', function () {
@@ -262,7 +307,7 @@ var Settings = (function () {
     // ── Bot API Calls ───────────────────────────────────────────────
 
     function fetchModels(botId, $card, $btn) {
-        var modelListId = 'models-' + botId;
+        var baseUrl = $card.find('.bot-base-url').val();
         $btn.prop('disabled', true).text('Fetching…');
         $.ajax({
             url: '/api/models',
@@ -270,12 +315,15 @@ var Settings = (function () {
             contentType: 'application/json',
             data: JSON.stringify({
                 bot_id: botId,
-                base_url: $card.find('.bot-base-url').val(),
+                base_url: baseUrl,
                 api_key: $card.find('.bot-api-key').val(),
             }),
             success: function (data) {
                 var models = data.models || [];
-                $card.find('#' + modelListId).html(buildOptions(models));
+                modelCache[normalizeUrl(baseUrl)] = {
+                    models: models, fetched_at: data.fetched_at,
+                };
+                refreshModelLists(baseUrl);
                 showToast(models.length + ' models available — start typing to search');
                 $card.find('.bot-model').trigger('focus');
             },

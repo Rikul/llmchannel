@@ -1,7 +1,9 @@
 from flask import Flask, render_template, request, jsonify, Response
 from flask_cors import CORS
 import hashlib
+import json
 import os
+import time
 from urllib.parse import urlsplit
 from sqlalchemy import inspect, text
 
@@ -14,7 +16,7 @@ from config import (
 )
 from message_store import MessageStore
 from bot_manager import BotManager
-from models import db, Bot
+from models import db, Bot, EndpointModels
 
 load_dotenv()
 
@@ -460,9 +462,43 @@ def toggle_bot(bot_id):
     return jsonify(bot)
 
 
+def _cache_models(base_url, models):
+    """Store an endpoint's model list, replacing any earlier fetch. Returns the cache entry."""
+    key = llm_clients.normalize_base_url(base_url)
+    fetched_at = time.time()
+    try:
+        row = db.session.get(EndpointModels, key)
+        if row is None:
+            row = EndpointModels(base_url=key)
+            db.session.add(row)
+        row.models = json.dumps(models)
+        row.fetched_at = fetched_at
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        app.logger.warning(f"Failed to cache model list for {key}: {e}")
+    return {"models": models, "fetched_at": fetched_at}
+
+
+@app.route("/api/models")
+def cached_models():
+    """All cached model lists, keyed by normalized endpoint URL. Makes no network calls."""
+    cache = {}
+    for row in EndpointModels.query.all():
+        try:
+            models = json.loads(row.models)
+        except ValueError:
+            continue
+        cache[row.base_url] = {"models": models, "fetched_at": row.fetched_at}
+    return jsonify(cache)
+
+
 @app.route("/api/models", methods=["POST"])
 def list_models():
-    """List models from an endpoint. Uses the stored key when the UI sends a masked one."""
+    """Fetch models from an endpoint and cache them.
+
+    Uses the stored key when the UI sends a masked one.
+    """
     data = request.get_json(force=True)
     base_url = str(data.get("base_url") or "").strip()
     api_key = data.get("api_key") or ""
@@ -479,7 +515,10 @@ def list_models():
         models = llm_clients.list_models(base_url, api_key)
     except Exception as e:
         return jsonify({"error": f"Could not list models: {e}"}), 502
-    return jsonify({"models": models})
+
+    entry = _cache_models(base_url, models)
+    entry["base_url"] = llm_clients.normalize_base_url(base_url)
+    return jsonify(entry)
 
 
 # ── Run ──────────────────────────────────────────────────────────────────

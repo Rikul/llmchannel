@@ -133,6 +133,8 @@ LM Studio, llama.cpp, vLLM, OpenAI, ...). There are no provider-specific clients
   `{{OPERATOR_NAME}}`, `{{PARTICIPANTS}}`, `{{PERSONA}}`
 - Bots reply `[PASS]` to stay silent; `bot_manager._ReplyFilter` drops those messages
 - Add endpoint presets to `ENDPOINT_PRESETS` in `config.py`
+- "Fetch models" results are cached per endpoint in the `endpoint_models` table, keyed by
+  `llm_clients.normalize_base_url` (mirrored by `normalizeUrl` in `settings.js`)
 
 ## Conversations
 

@@ -87,6 +87,15 @@ class Message(db.Model):
         }
 
 
+class EndpointModels(db.Model):
+    """Model IDs last fetched from an endpoint's /models, keyed by normalized base URL."""
+    __tablename__ = 'endpoint_models'
+
+    base_url = db.Column(db.String(500), primary_key=True)
+    models = db.Column(db.Text, nullable=False, default='[]')  # JSON list of model IDs
+    fetched_at = db.Column(db.Float, nullable=False)
+
+
 class Setting(db.Model):
     """Model for app settings."""
     __tablename__ = 'settings'

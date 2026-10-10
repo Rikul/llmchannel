@@ -1,3 +1,5 @@
+from urllib.parse import urlsplit
+
 from config import BOT_RESPONSE_TIMEOUT, OPERATOR_NAME
 from utils import is_oauth_or_rate_limit_error
 
@@ -74,6 +76,16 @@ def _format_channel_history(messages, bot_nickname):
         merged.insert(0, {"role": "user", "content": "[System]: Channel opened."})
 
     return merged
+
+
+def normalize_base_url(url):
+    """Canonical form of an endpoint URL, used as the model-list cache key.
+
+    Lowercases scheme and host and drops trailing slashes; the path keeps its case.
+    """
+    parts = urlsplit((url or "").strip())
+    path = parts.path.rstrip("/")
+    return f"{parts.scheme.lower()}://{parts.netloc.lower()}{path}"
 
 
 # ── OpenAI-Compatible Client ─────────────────────────────────────────────

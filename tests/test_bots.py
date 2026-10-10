@@ -5,7 +5,9 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from bot_manager import _ReplyFilter, _is_mentioned  # noqa: E402
-from llm_clients import _format_channel_history, build_system_prompt  # noqa: E402
+from llm_clients import (  # noqa: E402
+    _format_channel_history, build_system_prompt, normalize_base_url,
+)
 
 
 def _run_filter(tokens, nickname="Ada"):
@@ -65,6 +67,16 @@ class PromptTest(unittest.TestCase):
         self.assertTrue(_is_mentioned("Ada", "hey @ada, thoughts?"))
         self.assertFalse(_is_mentioned("Ada", "hey @adam"))
         self.assertFalse(_is_mentioned("Ada", "email ada@x.com"))
+
+
+class NormalizeUrlTest(unittest.TestCase):
+    def test_equivalent_urls_share_a_cache_key(self):
+        variants = ["https://OpenRouter.ai/api/v1/", " https://openrouter.ai/api/v1 "]
+        keys = {normalize_base_url(u) for u in variants}
+        self.assertEqual(keys, {"https://openrouter.ai/api/v1"})
+
+    def test_path_case_is_kept(self):
+        self.assertEqual(normalize_base_url("http://HOST:1234/V1//"), "http://host:1234/V1")
 
 
 if __name__ == "__main__":
