@@ -383,13 +383,29 @@ var ChatApp = (function () {
 
     // ── Message Sending ─────────────────────────────────────────────
 
+    // Grow the input with its content, up to the CSS max-height
+    function autosizeInput() {
+        var el = document.getElementById('chat-input');
+        el.style.height = 'auto';
+        el.style.height = el.scrollHeight + 2 + 'px';
+    }
+
+    function insertNewline(el) {
+        var start = el.selectionStart;
+        var end = el.selectionEnd;
+        el.value = el.value.slice(0, start) + '\n' + el.value.slice(end);
+        el.selectionStart = el.selectionEnd = start + 1;
+        autosizeInput();
+    }
+
     function handleSend(e) {
         e.preventDefault();
         var $input = $('#chat-input');
         var content = $.trim($input.val());
         if (!content) return;
 
-        $input.val('').focus();
+        $input.val('').trigger('focus');
+        autosizeInput();
 
         $.ajax({
             url: '/api/messages',
@@ -460,13 +476,18 @@ var ChatApp = (function () {
         // Form handler
         $('#chat-form').on('submit', handleSend);
 
-        // Also send on Enter in textarea (if we change to textarea later)
-        $('#chat-input').on('keydown', function (e) {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
+        // Enter sends; Shift+Enter (native) or Ctrl/Cmd+Enter inserts a new line
+        $('#chat-input').on('keydown.chat', function (e) {
+            if (e.key !== 'Enter' || e.originalEvent.isComposing) return;
+            if (e.shiftKey) return;
+            e.preventDefault();
+            if (e.ctrlKey || e.metaKey) {
+                insertNewline(this);
+            } else {
                 $('#chat-form').trigger('submit');
             }
         });
+        $('#chat-input').on('input.chat', autosizeInput);
 
         // Conversation controls
         $('#btn-new-conversation').on('click', startNewConversation);

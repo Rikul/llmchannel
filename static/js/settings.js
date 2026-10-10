@@ -8,6 +8,23 @@ var Settings = (function () {
     var knownNicknames = [];
     var modelCache = {};       // normalized endpoint URL -> { models, fetched_at }
 
+    // Names for new bots: no spaces or [ ] @ : (the server rejects those), max 32 chars
+    var botNames = [
+        'Ada', 'Turing', 'Hopper', 'Lovelace', 'Babbage', 'Knuth', 'Ritchie', 'Dijkstra',
+        'Shannon', 'Hamilton', 'Liskov', 'Torvalds', 'Wozniak', 'Kay', 'McCarthy', 'Minsky',
+        'Pixel', 'Sprocket', 'Widget', 'Gizmo', 'Cogsworth', 'Bolt', 'Rivet', 'Servo',
+        'Echo', 'Nova', 'Orion', 'Vega', 'Lyra', 'Juno', 'Atlas', 'Io', 'Rigel', 'Sirius',
+        'Socrates', 'Hypatia', 'Plato', 'Kant', 'Spinoza', 'Diogenes', 'Seneca', 'Confucius',
+        'Marvin', 'Hal', 'Bender', 'Data', 'Jarvis', 'Robby', 'Wall-E', 'Bishop', 'Baymax',
+        'Mochi', 'Biscuit', 'Pickles', 'Noodle', 'Pepper', 'Waffles', 'Nugget', 'Toast',
+        'Sage', 'Quill', 'Riddle', 'Cipher', 'Glitch', 'Byte', 'Kernel', 'Vector', 'Lambda',
+    ];
+
+    var botColors = [
+        '#ef4444', '#f97316', '#f59e0b', '#84cc16', '#10b981', '#14b8a6',
+        '#06b6d4', '#3b82f6', '#6366f1', '#8b5cf6', '#d946ef', '#ec4899',
+    ];
+
     var modelHints = {
         'openrouter.ai': [
             'openai/gpt-4o-mini', 'anthropic/claude-sonnet-4.5', 'google/gemini-2.5-flash',
@@ -184,8 +201,12 @@ var Settings = (function () {
             // Nickname + Color
             '<div style="display: grid; grid-template-columns: 1fr auto; gap: 12px;">' +
             '<div class="field-group"><label>Nickname</label>' +
+            '<div class="field-row">' +
             '<input type="text" class="bot-nickname" maxlength="32" value="' +
-            escapeHtml(bot.nickname) + '"></div>' +
+            escapeHtml(bot.nickname) + '">' +
+            '<button class="btn btn-ghost btn-sm btn-random-name" ' +
+            'title="Pick a random unused name">🎲</button>' +
+            '</div></div>' +
             '<div class="field-group"><label>Color</label>' +
             '<input type="color" class="bot-color" value="' + escapeHtml(bot.color) + '">' +
             '</div>' +
@@ -274,6 +295,10 @@ var Settings = (function () {
             var url = $(this).val();
             $card.find('.bot-model-list').html(buildOptions(hintsFor(url)));
             $card.find('.bot-model-source').text(modelSourceText(url));
+        });
+
+        $card.find('.btn-random-name').on('click', function () {
+            $card.find('.bot-nickname').val(randomNickname()).trigger('focus');
         });
 
         $card.find('.btn-fetch-models').on('click', function () {
@@ -398,7 +423,17 @@ var Settings = (function () {
         });
     }
 
-    function nextNickname() {
+    function pickRandom(list) {
+        return list[Math.floor(Math.random() * list.length)];
+    }
+
+    // A random name no bot is using yet; falls back to Bot1, Bot2, ... once all are taken
+    function randomNickname() {
+        var unused = $.grep(botNames, function (name) {
+            return $.inArray(name.toLowerCase(), knownNicknames) === -1;
+        });
+        if (unused.length) return pickRandom(unused);
+
         var n = knownNicknames.length + 1;
         while ($.inArray(('bot' + n).toLowerCase(), knownNicknames) !== -1) {
             n++;
@@ -411,7 +446,7 @@ var Settings = (function () {
             url: '/api/bots',
             method: 'POST',
             contentType: 'application/json',
-            data: JSON.stringify({ nickname: nextNickname() }),
+            data: JSON.stringify({ nickname: randomNickname(), color: pickRandom(botColors) }),
             success: function (bot) {
                 expanded[bot.id] = true;
                 loadBots();

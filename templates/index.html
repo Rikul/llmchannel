@@ -98,15 +98,15 @@
 
             <!-- Input Bar -->
             <div id="input-area" class="input-area" style="padding: 12px 16px;">
-                <form id="chat-form" style="display: flex; gap: 10px;">
-                    <input
+                <form id="chat-form" style="display: flex; align-items: flex-end; gap: 10px;">
+                    <textarea
                         id="chat-input"
-                        type="text"
                         class="chat-input"
-                        placeholder="Type a message..."
+                        rows="1"
+                        placeholder="Type a message… (Enter to send, Shift+Enter or Ctrl+Enter for a new line)"
                         autocomplete="off"
                         style="flex: 1; padding: 10px 16px; border-radius: 8px;"
-                    >
+                    ></textarea>
                     <button type="submit" class="btn btn-primary" style="padding: 10px 20px; border-radius: 8px;">
                         <span style="display: flex; align-items: center; gap: 6px;">
                             Send
