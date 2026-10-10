@@ -124,8 +124,12 @@ var ModuleName = (function () {
 
 ## LLM Client Integration
 
-When adding new providers:
-1. Add to `llm_clients.py`
-2. Update `modelHints` in `settings.js`
-3. Follow existing streaming generator pattern
-4. Handle provider-specific requirements (e.g., Anthropic requires user role first)
+All bots talk to OpenAI-compatible chat completion endpoints (OpenRouter, Ollama,
+LM Studio, llama.cpp, vLLM, OpenAI, ...). There are no provider-specific clients.
+- Each bot stores `base_url`, `api_key` (optional for local servers), `model`, `persona`,
+  and optional `temperature` / `max_tokens`
+- `SYSTEM_PROMPT.md` is the default main system prompt; the operator can override it in
+  Settings (stored in the `settings` table). Placeholders: `{{BOT_NAME}}`,
+  `{{OPERATOR_NAME}}`, `{{PARTICIPANTS}}`, `{{PERSONA}}`
+- Bots reply `[PASS]` to stay silent; `bot_manager._ReplyFilter` drops those messages
+- Add endpoint presets to `ENDPOINT_PRESETS` in `config.py`

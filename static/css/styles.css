@@ -333,6 +333,47 @@ body {
     cursor: pointer;
 }
 
+.section-title {
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+}
+
+.field-hint {
+    margin-top: 4px;
+    font-size: 0.6875rem;
+    line-height: 1.5;
+    color: var(--text-muted);
+}
+
+.field-hint code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6875rem;
+}
+
+.field-row {
+    display: flex;
+    gap: 8px;
+}
+
+.bot-card input.toggle-switch {
+    width: 34px;
+    padding: 0;
+    border: none;
+}
+
+.bot-card .field-row input {
+    flex: 1;
+    min-width: 0;
+}
+
+.bot-card .field-row .btn {
+    flex-shrink: 0;
+}
+
 /* ── Buttons ────────────────────────────────────────────────────────── */
 
 .btn {

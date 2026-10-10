@@ -5,17 +5,17 @@ db = SQLAlchemy()
 
 
 class Bot(db.Model):
-    """Model for bot configurations."""
+    """Model for bot configurations (any OpenAI-compatible endpoint)."""
     __tablename__ = 'bots'
 
     id = db.Column(db.String(36), primary_key=True)
     nickname = db.Column(db.String(100), nullable=False)
-    provider = db.Column(db.String(50), nullable=False)
-    model = db.Column(db.String(100), nullable=False)
+    base_url = db.Column(db.String(500), nullable=False, default='')
     api_key = db.Column(db.String(500), nullable=True, default='')
-    gemini_access_token = db.Column(db.String(2048), nullable=True, default='')
-    gemini_refresh_token = db.Column(db.String(2048), nullable=True, default='')
-    system_prompt = db.Column(db.Text, nullable=False)
+    model = db.Column(db.String(200), nullable=False)
+    persona = db.Column(db.Text, nullable=False, default='')
+    temperature = db.Column(db.Float, nullable=True)
+    max_tokens = db.Column(db.Integer, nullable=True)
     color = db.Column(db.String(20), nullable=False)
     enabled = db.Column(db.Boolean, nullable=False, default=True)
 
@@ -24,12 +24,12 @@ class Bot(db.Model):
         return {
             'id': self.id,
             'nickname': self.nickname,
-            'provider': self.provider,
-            'model': self.model,
+            'base_url': self.base_url,
             'api_key': self.api_key,
-            'gemini_access_token': self.gemini_access_token,
-            'gemini_refresh_token': self.gemini_refresh_token,
-            'system_prompt': self.system_prompt,
+            'model': self.model,
+            'persona': self.persona,
+            'temperature': self.temperature,
+            'max_tokens': self.max_tokens,
             'color': self.color,
             'enabled': self.enabled,
         }

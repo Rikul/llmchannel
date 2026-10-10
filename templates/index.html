@@ -112,9 +112,34 @@
                 </button>
             </div>
             <div class="modal-body">
-                <div style="font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px;">
-                    Bot Configuration
+                <div class="section-title">Channel</div>
+                <div id="channel-settings" class="bot-card">
+                    <div class="field-group">
+                        <label for="channel-system-prompt">Main System Prompt</label>
+                        <textarea id="channel-system-prompt" rows="10"></textarea>
+                        <div class="field-hint">
+                            Sent to every bot. Placeholders: <code>{{ '{{BOT_NAME}}' }}</code>,
+                            <code>{{ '{{OPERATOR_NAME}}' }}</code>, <code>{{ '{{PARTICIPANTS}}' }}</code>,
+                            <code>{{ '{{PERSONA}}' }}</code> (the bot's own persona; appended at the
+                            end if the placeholder is missing). Bots reply <code>[PASS]</code> to stay silent.
+                        </div>
+                    </div>
+                    <div class="field-group">
+                        <label for="channel-chain-limit">Bot-to-bot reply limit</label>
+                        <input type="number" id="channel-chain-limit" min="0" max="100" style="width: 120px;">
+                        <div class="field-hint">
+                            Max replies bots make to each other after each of your messages.
+                            0 = bots only answer you. Address bots with <code>@Name</code> to
+                            choose who answers.
+                        </div>
+                    </div>
+                    <div style="display: flex; justify-content: flex-end; gap: 8px;">
+                        <button id="btn-reset-prompt" class="btn btn-ghost btn-sm">Reset prompt to default</button>
+                        <button id="btn-save-channel" class="btn btn-primary btn-sm">Save</button>
+                    </div>
                 </div>
+
+                <div class="section-title">Bots</div>
                 <div id="bot-config-list">
                     <!-- Dynamically populated bot cards -->
                 </div>

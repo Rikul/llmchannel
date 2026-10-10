@@ -21,6 +21,11 @@ var ChatApp = (function () {
         return div.innerHTML;
     }
 
+    function endpointHost(url) {
+        var match = /^https?:\/\/([^\/]+)/.exec(url || '');
+        return match ? match[1] : 'no endpoint';
+    }
+
     function getInitial(name) {
         return (name || '?').charAt(0).toUpperCase();
     }
@@ -195,9 +200,8 @@ var ChatApp = (function () {
             // Bots
             $.each(bots, function (i, bot) {
                 var statusClass = bot.enabled ? 'online' : 'offline';
-                var hasKey = bot.api_key && bot.api_key !== '****';
-                var subtitle = bot.provider + ' / ' + bot.model;
-                if (!hasKey) subtitle += ' (no key)';
+                var subtitle = bot.model + ' @ ' + endpointHost(bot.base_url);
+                if (!bot.enabled) subtitle += ' (off)';
 
                 $list.append(
                     '<div class="user-item">' +

@@ -2,18 +2,22 @@
 
 var Settings = (function () {
 
+    var presets = {};          // name -> base URL, loaded from /api/settings
+    var defaultPrompt = '';
+    var expanded = {};         // bot id -> true while its card is open
+    var knownNicknames = [];
+
     var modelHints = {
-        openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
-        anthropic: ['claude-sonnet-4-5-20250929', 'claude-haiku-4-20250414', 'claude-opus-4-20250514'],
-        gemini: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash'],
-        deepseek: ['deepseek-chat', 'deepseek-reasoner'],
-        qwen: ['qwen-max', 'qwen-plus', 'qwen-turbo', 'qwen2.5-72b-instruct'],
-        ollama: ['llama3.2', 'llama3.1', 'gemma2', 'mistral', 'qwen2.5', 'deepseek-r1'],
-        'openai-compatible': ['meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo', 'meta-llama/Llama-3.3-70B-Instruct-Turbo'],
+        'openrouter.ai': [
+            'openai/gpt-4o-mini', 'anthropic/claude-sonnet-4.5', 'google/gemini-2.5-flash',
+            'deepseek/deepseek-chat', 'meta-llama/llama-3.3-70b-instruct',
+        ],
+        'localhost:11434': ['llama3.2', 'qwen2.5', 'gemma2', 'mistral'],
     };
 
     function open() {
         $('#settings-modal').css('display', 'flex');
+        loadChannelSettings();
         loadBots();
     }
 
@@ -21,126 +25,176 @@ var Settings = (function () {
         $('#settings-modal').css('display', 'none');
     }
 
+    // ── Channel Settings ────────────────────────────────────────────
+
+    function loadChannelSettings() {
+        $.getJSON('/api/settings', function (data) {
+            presets = data.endpoint_presets || {};
+            defaultPrompt = data.default_system_prompt || '';
+            $('#channel-system-prompt').val(data.system_prompt);
+            $('#channel-chain-limit').val(data.bot_chain_limit);
+        });
+    }
+
+    function saveChannelSettings() {
+        $.ajax({
+            url: '/api/settings',
+            method: 'PUT',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                system_prompt: $('#channel-system-prompt').val(),
+                bot_chain_limit: $('#channel-chain-limit').val(),
+            }),
+            success: function (data) {
+                $('#channel-system-prompt').val(data.system_prompt);
+                $('#channel-chain-limit').val(data.bot_chain_limit);
+                showToast('Channel settings saved');
+            },
+            error: function (xhr) {
+                showToast(errorText(xhr, 'Failed to save channel settings'), true);
+            },
+        });
+    }
+
+    // ── Bot Cards ───────────────────────────────────────────────────
+
     function loadBots() {
         $.getJSON('/api/bots', function (bots) {
             var $list = $('#bot-config-list');
             $list.empty();
+            knownNicknames = $.map(bots, function (b) { return b.nickname.toLowerCase(); });
             $.each(bots, function (i, bot) {
                 $list.append(createBotCard(bot));
             });
         });
     }
 
-    function createBotCard(bot) {
-        var $card = $('<div class="bot-card" data-bot-id="' + bot.id + '"></div>');
-        var $body = $('<div class="bot-card-body" style="display: none;"></div>');
+    function endpointLabel(url) {
+        var label = '';
+        $.each(presets, function (name, presetUrl) {
+            if (presetUrl === url) label = name;
+        });
+        return label;
+    }
 
-        // Header row with nickname, toggle, delete
+    function hintsFor(baseUrl) {
+        var hints = [];
+        $.each(modelHints, function (host, models) {
+            if ((baseUrl || '').indexOf(host) !== -1) hints = models;
+        });
+        return hints;
+    }
+
+    function buildOptions(values) {
+        var html = '';
+        $.each(values, function (i, v) {
+            html += '<option value="' + escapeHtml(v) + '">';
+        });
+        return html;
+    }
+
+    function presetOptions() {
+        var html = '';
+        $.each(presets, function (name, url) {
+            html += '<option value="' + escapeHtml(url) + '">' + escapeHtml(name) + '</option>';
+        });
+        return html;
+    }
+
+    function numberValue(v) {
+        return (v === null || v === undefined) ? '' : v;
+    }
+
+    function createBotCard(bot) {
+        var $card = $('<div class="bot-card"></div>').attr('data-bot-id', bot.id);
+        var $body = $('<div class="bot-card-body"></div>').toggle(!!expanded[bot.id]);
+        var subtitle = bot.model + (endpointLabel(bot.base_url) ?
+            ' · ' + endpointLabel(bot.base_url) : '');
+
+        // Header row with nickname, enabled toggle, delete
         var $header = $(
-            '<div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">' +
-            '<button class="icon-btn btn-toggle-bot" title="Expand" style="width: 24px; height: 24px;">' +
-            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+            '<div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px; ' +
+            'cursor: pointer;">' +
+            '<button class="icon-btn btn-toggle-bot" title="Expand" ' +
+            'style="width: 24px; height: 24px;">' +
+            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+            'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
             '<polyline points="6 9 12 15 18 9"/>' +
             '</svg>' +
             '</button>' +
-            '<div style="flex: 1; font-weight: 600; font-size: 0.9375rem; color: ' + escapeHtml(bot.color) + ';">' +
-            escapeHtml(bot.nickname) +
+            '<div style="flex: 1; min-width: 0;">' +
+            '<div style="font-weight: 600; font-size: 0.9375rem; color: ' +
+            escapeHtml(bot.color) + ';">' + escapeHtml(bot.nickname) + '</div>' +
+            '<div style="font-size: 0.6875rem; color: var(--text-muted); overflow: hidden; ' +
+            'text-overflow: ellipsis; white-space: nowrap;">' + escapeHtml(subtitle) + '</div>' +
             '</div>' +
-            '<label style="display: flex; align-items: left; gap: 6px; font-size: 0.25rem; color: var(--text-secondary); cursor: pointer; flex-shrink: 0; white-space: nowrap;">' +
-            '<input type="checkbox" class="toggle-switch bot-enabled" ' + (bot.enabled ? 'checked' : '') + '>' +
-            '</label>' +
-            '<button class="btn btn-danger btn-sm btn-delete-bot" title="Delete bot">Delete</button>' +
+            '<input type="checkbox" class="toggle-switch bot-enabled" title="Enabled" ' +
+            (bot.enabled ? 'checked' : '') + '>' +
+            '<button class="btn btn-danger btn-sm btn-delete-bot" title="Delete bot">' +
+            'Delete</button>' +
             '</div>'
         );
         $card.append($header);
 
-        // Row 1: Nickname + Color
+        var urlListId = 'endpoints-' + bot.id;
+        var modelListId = 'models-' + bot.id;
+
         $body.append(
+            // Nickname + Color
             '<div style="display: grid; grid-template-columns: 1fr auto; gap: 12px;">' +
-            '<div class="field-group">' +
-            '<label>Nickname</label>' +
-            '<input type="text" class="bot-nickname" value="' + escapeHtml(bot.nickname) + '">' +
-            '</div>' +
-            '<div class="field-group">' +
-            '<label>Color</label>' +
+            '<div class="field-group"><label>Nickname</label>' +
+            '<input type="text" class="bot-nickname" maxlength="32" value="' +
+            escapeHtml(bot.nickname) + '"></div>' +
+            '<div class="field-group"><label>Color</label>' +
             '<input type="color" class="bot-color" value="' + escapeHtml(bot.color) + '">' +
             '</div>' +
-            '</div>'
-        );
-
-        // Row 2: Provider + Model
-        var providerOptions = ['openai', 'anthropic', 'gemini', 'deepseek', 'qwen', 'ollama', 'openai-compatible'];
-        var selectHtml = '<select class="bot-provider">';
-        $.each(providerOptions, function (i, p) {
-            var sel = (p === bot.provider) ? ' selected' : '';
-            var displayName = p.charAt(0).toUpperCase() + p.slice(1);
-            if (p === 'openai-compatible') {
-                displayName = 'OpenAI-Compatible';
-            } else if (p === 'deepseek') {
-                displayName = 'DeepSeek';
-            }
-            selectHtml += '<option value="' + p + '"' + sel + '>' + displayName + '</option>';
-        });
-        selectHtml += '</select>';
-
-        $body.append(
-            '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">' +
-            '<div class="field-group">' +
-            '<label>Provider</label>' +
-            selectHtml +
             '</div>' +
-            '<div class="field-group">' +
-            '<label>Model</label>' +
-            '<input type="text" class="bot-model" value="' + escapeHtml(bot.model) + '" list="models-' + bot.id + '">' +
-            '<datalist id="models-' + bot.id + '">' +
-            buildModelOptions(bot.provider) +
+
+            // Endpoint
+            '<div class="field-group"><label>Endpoint URL</label>' +
+            '<input type="text" class="bot-base-url" list="' + urlListId + '" value="' +
+            escapeHtml(bot.base_url) + '" placeholder="https://openrouter.ai/api/v1">' +
+            '<datalist id="' + urlListId + '">' + presetOptions() + '</datalist>' +
+            '<div class="field-hint">Any OpenAI-compatible <code>/v1</code> base URL ' +
+            '(OpenRouter, Ollama, LM Studio, llama.cpp, vLLM…).</div>' +
+            '</div>' +
+
+            // API key
+            '<div class="field-group"><label>API Key</label>' +
+            '<input type="password" class="bot-api-key" autocomplete="off" value="' +
+            escapeHtml(bot.api_key) + '" placeholder="Leave empty for local servers">' +
+            '</div>' +
+
+            // Model
+            '<div class="field-group"><label>Model</label>' +
+            '<div class="field-row">' +
+            '<input type="text" class="bot-model" list="' + modelListId + '" value="' +
+            escapeHtml(bot.model) + '" placeholder="e.g. openai/gpt-4o-mini or llama3.2">' +
+            '<button class="btn btn-ghost btn-sm btn-fetch-models" ' +
+            'title="Ask the endpoint which models it serves">Fetch models</button>' +
+            '</div>' +
+            '<datalist id="' + modelListId + '">' + buildOptions(hintsFor(bot.base_url)) +
             '</datalist>' +
             '</div>' +
-            '</div>'
-        );
 
-        // API Key
-        var apiKeyPlaceholder = 'Enter API key...';
-        var apiKeyType = 'password';
-        if (bot.provider === 'ollama') {
-            apiKeyPlaceholder = 'Optional: http://localhost:11434 (default)';
-            apiKeyType = 'text';
-        } else if (bot.provider === 'openai-compatible') {
-            apiKeyPlaceholder = 'BASE_URL|API_KEY (e.g., https://api.together.xyz/v1|your-key)';
-        }
-        
-        $body.append(
-            '<div class="field-group">' +
-            '<label>API Key</label>' +
-            '<input type="' + apiKeyType + '" class="bot-api-key" value="' + escapeHtml(bot.api_key) + '" placeholder="' + apiKeyPlaceholder + '">' +
-            '</div>'
-        );
-
-        // Gemini OAuth
-        $body.append(
-            '<div class="field-group bot-gemini-oauth" style="display: ' +
-            (bot.provider === 'gemini' ? 'block' : 'none') + ';">' +
-            '<label>Gemini OAuth</label>' +
-            '<div style="display: flex; align-items: center; gap: 10px;">' +
-            '<a class="btn btn-ghost btn-sm" href="/api/bots/' + bot.id + '/google/login" target="_blank" rel="noopener">' +
-            'Login with Google</a>' +
-            '<span class="bot-gemini-status" style="font-size: 0.75rem; color: var(--text-muted);">' +
-            (bot.gemini_access_token ? 'Connected' : 'Not connected') +
-            '</span>' +
+            // Temperature + Max tokens
+            '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">' +
+            '<div class="field-group"><label>Temperature</label>' +
+            '<input type="number" class="bot-temperature" min="0" max="2" step="0.1" ' +
+            'placeholder="Model default" value="' + numberValue(bot.temperature) + '"></div>' +
+            '<div class="field-group"><label>Max tokens</label>' +
+            '<input type="number" class="bot-max-tokens" min="1" step="1" ' +
+            'placeholder="Model default" value="' + numberValue(bot.max_tokens) + '"></div>' +
             '</div>' +
-            '</div>'
-        );
 
-        // System Prompt
-        $body.append(
-            '<div class="field-group">' +
-            '<label>System Prompt</label>' +
-            '<textarea class="bot-system-prompt" rows="3">' + escapeHtml(bot.system_prompt) + '</textarea>' +
-            '</div>'
-        );
+            // Persona
+            '<div class="field-group"><label>Persona</label>' +
+            '<textarea class="bot-persona" rows="4" placeholder="Who this bot is: role, ' +
+            'expertise, tone, quirks. Combined with the main system prompt.">' +
+            escapeHtml(bot.persona) + '</textarea>' +
+            '</div>' +
 
-        // Save button
-        $body.append(
+            // Save
             '<div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px;">' +
             '<button class="btn btn-primary btn-sm btn-save-bot">Save</button>' +
             '</div>'
@@ -150,71 +204,41 @@ var Settings = (function () {
 
         // ── Event handlers ──
 
-        // Collapse/expand
+        function toggleBody() {
+            expanded[bot.id] = !expanded[bot.id];
+            $body.slideToggle(150);
+        }
+
         $header.on('click', function (e) {
             if ($(e.target).closest('button, input, select, textarea, label').length) {
                 return;
             }
-            $body.slideToggle(150);
+            toggleBody();
         });
 
         $card.find('.btn-toggle-bot').on('click', function (e) {
             e.stopPropagation();
-            $body.slideToggle(150);
+            toggleBody();
         });
 
-        // Provider change -> update model hints
-        $card.find('.bot-provider').on('change', function () {
-            var provider = $(this).val();
-            var hints = modelHints[provider] || [];
-            var $modelGroup = $card.find('.bot-model').closest('.field-group');
-            var currentValue = $card.find('.bot-model').val();
-            var nextValue = '';
-
-            if ($.inArray(currentValue, hints) !== -1) {
-                nextValue = currentValue;
-            } else if (hints.length) {
-                nextValue = hints[0];
-            }
-
-            var listId = 'models-' + bot.id + '-' + Date.now();
-            $modelGroup.find('.bot-model').remove();
-            $modelGroup.find('datalist').remove();
-            $modelGroup.append(
-                '<input type="text" class="bot-model" value="' +
-                escapeHtml(nextValue) +
-                '" list="' + listId + '">' +
-                '<datalist id="' + listId + '">' +
-                buildModelOptions(provider) +
-                '</datalist>'
-            );
-
-            // Update API key placeholder based on provider
-            var $apiKeyInput = $card.find('.bot-api-key');
-            var apiKeyPlaceholder = 'Enter API key...';
-            var apiKeyType = 'password';
-            if (provider === 'ollama') {
-                apiKeyPlaceholder = 'Optional: http://localhost:11434 (default)';
-                apiKeyType = 'text';
-            } else if (provider === 'openai-compatible') {
-                apiKeyPlaceholder = 'BASE_URL|API_KEY (e.g., https://api.together.xyz/v1|your-key)';
-            }
-            $apiKeyInput.attr('placeholder', apiKeyPlaceholder);
-            $apiKeyInput.attr('type', apiKeyType);
-
-            // For providers with different API key semantics, clear any existing (possibly masked) key value
-            if (provider === 'ollama' || provider === 'openai-compatible') {
-                $apiKeyInput.val('');
-            }
-            $card.find('.bot-gemini-oauth').toggle(provider === 'gemini');
+        // Enable/disable takes effect immediately
+        $card.find('.bot-enabled').on('change', function () {
+            setEnabled(bot.id, $(this).is(':checked'));
         });
 
-        // Save
+        // Endpoint change -> refresh static model hints
+        $card.find('.bot-base-url').on('change', function () {
+            $card.find('#' + modelListId).html(buildOptions(hintsFor($(this).val())));
+        });
+
+        $card.find('.btn-fetch-models').on('click', function () {
+            fetchModels(bot.id, $card, $(this));
+        });
+
         $card.find('.btn-save-bot').on('click', function () {
             saveBot(bot.id, $card);
         });
 
-        // Delete
         $card.find('.btn-delete-bot').on('click', function () {
             if (confirm('Remove bot "' + bot.nickname + '"?')) {
                 deleteBot(bot.id);
@@ -224,30 +248,56 @@ var Settings = (function () {
         return $card;
     }
 
-    function buildModelOptions(provider) {
-        var hints = modelHints[provider] || [];
-        var html = '';
-        $.each(hints, function (i, m) {
-            html += '<option value="' + m + '">';
-        });
-        return html;
+    function escapeHtml(text) {
+        if (text === null || text === undefined) return '';
+        var div = document.createElement('div');
+        div.appendChild(document.createTextNode(String(text)));
+        return div.innerHTML.replace(/"/g, '&quot;');
     }
 
-    function escapeHtml(text) {
-        if (!text) return '';
-        var div = document.createElement('div');
-        div.appendChild(document.createTextNode(text));
-        return div.innerHTML;
+    function errorText(xhr, fallback) {
+        return (xhr && xhr.responseJSON && xhr.responseJSON.error) || fallback;
+    }
+
+    // ── Bot API Calls ───────────────────────────────────────────────
+
+    function fetchModels(botId, $card, $btn) {
+        var modelListId = 'models-' + botId;
+        $btn.prop('disabled', true).text('Fetching…');
+        $.ajax({
+            url: '/api/models',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                bot_id: botId,
+                base_url: $card.find('.bot-base-url').val(),
+                api_key: $card.find('.bot-api-key').val(),
+            }),
+            success: function (data) {
+                var models = data.models || [];
+                $card.find('#' + modelListId).html(buildOptions(models));
+                showToast(models.length + ' models available — start typing to search');
+                $card.find('.bot-model').trigger('focus');
+            },
+            error: function (xhr) {
+                showToast(errorText(xhr, 'Could not fetch models'), true);
+            },
+            complete: function () {
+                $btn.prop('disabled', false).text('Fetch models');
+            },
+        });
     }
 
     function saveBot(botId, $card) {
         var data = {
             nickname: $card.find('.bot-nickname').val(),
-            provider: $card.find('.bot-provider').val(),
-            model: $card.find('.bot-model').val(),
-            api_key: $card.find('.bot-api-key').val(),
-            system_prompt: $card.find('.bot-system-prompt').val(),
             color: $card.find('.bot-color').val(),
+            base_url: $card.find('.bot-base-url').val(),
+            api_key: $card.find('.bot-api-key').val(),
+            model: $card.find('.bot-model').val(),
+            temperature: $card.find('.bot-temperature').val(),
+            max_tokens: $card.find('.bot-max-tokens').val(),
+            persona: $card.find('.bot-persona').val(),
             enabled: $card.find('.bot-enabled').is(':checked'),
         };
 
@@ -261,8 +311,25 @@ var Settings = (function () {
                 ChatApp.refreshSidebar();
                 showToast('Bot saved');
             },
-            error: function () {
-                showToast('Failed to save bot', true);
+            error: function (xhr) {
+                showToast(errorText(xhr, 'Failed to save bot'), true);
+            },
+        });
+    }
+
+    function setEnabled(botId, enabled) {
+        $.ajax({
+            url: '/api/bots/' + botId + '/toggle',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({ enabled: enabled }),
+            success: function () {
+                ChatApp.refreshSidebar();
+                showToast(enabled ? 'Bot enabled' : 'Bot disabled');
+            },
+            error: function (xhr) {
+                showToast(errorText(xhr, 'Failed to update bot'), true);
+                loadBots();
             },
         });
     }
@@ -272,11 +339,23 @@ var Settings = (function () {
             url: '/api/bots/' + botId,
             method: 'DELETE',
             success: function () {
+                delete expanded[botId];
                 loadBots();
                 ChatApp.refreshSidebar();
                 showToast('Bot removed');
             },
+            error: function (xhr) {
+                showToast(errorText(xhr, 'Failed to remove bot'), true);
+            },
         });
+    }
+
+    function nextNickname() {
+        var n = knownNicknames.length + 1;
+        while ($.inArray(('bot' + n).toLowerCase(), knownNicknames) !== -1) {
+            n++;
+        }
+        return 'Bot' + n;
     }
 
     function addBot() {
@@ -284,18 +363,15 @@ var Settings = (function () {
             url: '/api/bots',
             method: 'POST',
             contentType: 'application/json',
-            data: JSON.stringify({
-                nickname: 'NewBot',
-                provider: 'openai',
-                model: 'gpt-4o-mini',
-                api_key: '',
-                system_prompt: 'You are a helpful assistant participating in a group chat channel.',
-                color: '#6366f1',
-            }),
-            success: function () {
+            data: JSON.stringify({ nickname: nextNickname() }),
+            success: function (bot) {
+                expanded[bot.id] = true;
                 loadBots();
                 ChatApp.refreshSidebar();
-                showToast('Bot added');
+                showToast('Bot added (disabled until you enable it)');
+            },
+            error: function (xhr) {
+                showToast(errorText(xhr, 'Failed to add bot'), true);
             },
         });
     }
@@ -334,6 +410,12 @@ var Settings = (function () {
         $('#btn-settings').on('click', open);
         $('#btn-close-settings').on('click', close);
         $('#btn-add-bot').on('click', addBot);
+        $('#btn-save-channel').on('click', saveChannelSettings);
+        $('#btn-reset-prompt').on('click', function () {
+            if (confirm('Replace the main system prompt with the default? (Not saved yet)')) {
+                $('#channel-system-prompt').val(defaultPrompt);
+            }
+        });
 
         // Close on backdrop click
         $('#settings-modal').on('click', function (e) {
