@@ -68,6 +68,11 @@ class PromptTest(unittest.TestCase):
         self.assertFalse(_is_mentioned("Ada", "hey @adam"))
         self.assertFalse(_is_mentioned("Ada", "email ada@x.com"))
 
+    def test_mention_does_not_match_longer_hyphenated_name(self):
+        self.assertFalse(_is_mentioned("Ada", "@Ada-Bob what do you think?"))
+        self.assertTrue(_is_mentioned("Ada-Bob", "@Ada-Bob what do you think?"))
+        self.assertTrue(_is_mentioned("Ada", "thanks @Ada."))
+
 
 class NormalizeUrlTest(unittest.TestCase):
     def test_equivalent_urls_share_a_cache_key(self):

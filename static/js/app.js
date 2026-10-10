@@ -8,6 +8,7 @@ var ChatApp = (function () {
         evtSource: null,
         liveConversation: null,  // the conversation that accepts messages
         viewing: null,           // archived conversation shown read-only, or null
+        viewRequest: 0,          // bumped on every view switch; stale responses are dropped
     };
 
     // ── Helpers ──────────────────────────────────────────────────────
@@ -215,7 +216,10 @@ var ChatApp = (function () {
     }
 
     function viewConversation(conversationId) {
+        var request = ++state.viewRequest;
         $.getJSON('/api/conversations/' + conversationId, function (conv) {
+            // The operator clicked something else while this was loading
+            if (request !== state.viewRequest) return;
             state.viewing = conv;
             state.messages = conv.messages || [];
             $('#archive-banner').css('display', 'flex');
@@ -228,6 +232,7 @@ var ChatApp = (function () {
     }
 
     function showLive() {
+        state.viewRequest++;
         state.viewing = null;
         $('#archive-banner').hide();
         $('#archive-bots').hide();
@@ -242,6 +247,8 @@ var ChatApp = (function () {
         $.ajax({
             url: '/api/conversations',
             method: 'POST',
+            contentType: 'application/json',
+            data: '{}',
             error: function () {
                 alert('Could not start a new conversation.');
             },

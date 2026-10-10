@@ -8,7 +8,7 @@ var Settings = (function () {
     var knownNicknames = [];
     var modelCache = {};       // normalized endpoint URL -> { models, fetched_at }
 
-    // Names for new bots: no spaces or [ ] @ : (the server rejects those), max 32 chars
+    // Names for new bots: letters, numbers, _ and - only (the server rejects others), max 32
     var botNames = [
         'Ada', 'Turing', 'Hopper', 'Lovelace', 'Babbage', 'Knuth', 'Ritchie', 'Dijkstra',
         'Shannon', 'Hamilton', 'Liskov', 'Torvalds', 'Wozniak', 'Kay', 'McCarthy', 'Minsky',

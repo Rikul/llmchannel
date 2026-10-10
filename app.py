@@ -1,18 +1,19 @@
 from flask import Flask, render_template, request, jsonify, Response
-from flask_cors import CORS
 import hashlib
 import json
 import os
+import re
 import time
 from urllib.parse import urlsplit
 from sqlalchemy import inspect, text
+from werkzeug.exceptions import UnsupportedMediaType
 
 from dotenv import load_dotenv
 
 import llm_clients
 from channel_settings import ChannelSettings
 from config import (
-    DEFAULT_SYSTEM_PROMPT, ENDPOINT_PRESETS, OPERATOR_NAME, OPERATOR_COLOR,
+    DEFAULT_SYSTEM_PROMPT, ENDPOINT_PRESETS, NICKNAME_CHARS, OPERATOR_NAME, OPERATOR_COLOR,
 )
 from message_store import MessageStore
 from bot_manager import BotManager
@@ -20,8 +21,9 @@ from models import db, Bot, EndpointModels
 
 load_dotenv()
 
+# No CORS: the UI is same-origin, and other websites must not drive this API from a
+# user's browser (it can reach local services and holds API keys)
 app = Flask(__name__)
-CORS(app)
 
 # Database configuration
 basedir = os.path.abspath(os.path.dirname(__file__))
@@ -105,7 +107,11 @@ def _legacy_bot_to_fields(row):
         "model": row.get("model") or "",
         "persona": persona,
         "color": row.get("color") or "#6B7280",
-        "enabled": bool(row.get("enabled")),
+        # Hosted providers need a key; OAuth-only Gemini bots and unconfigured stock bots
+        # lose theirs here, so turn them off instead of letting them fail on every message
+        "enabled": bool(row.get("enabled")) and not (
+            provider in _LEGACY_BASE_URLS and not api_key.strip()
+        ),
     }
 
 
@@ -193,8 +199,46 @@ def _is_masked(value):
     return isinstance(value, str) and value.startswith("****")
 
 
-def _same_host(url_a, url_b):
-    return urlsplit(url_a or "").netloc.lower() == urlsplit(url_b or "").netloc.lower()
+def _origin(url):
+    """(scheme, host, effective port) of a URL, for deciding where a stored key may go."""
+    parts = urlsplit((url or "").strip())
+    scheme = parts.scheme.lower()
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    return scheme, (parts.hostname or "").lower(), port or {"http": 80, "https": 443}.get(scheme)
+
+
+def _same_origin(url_a, url_b):
+    return _origin(url_a) == _origin(url_b)
+
+
+def _parse_int(value):
+    """Parse a whole number from JSON (int, integral float, or digit string), else None."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else None
+    if isinstance(value, str) and re.fullmatch(r"\s*-?\d+\s*", value):
+        return int(value)
+    return None
+
+
+def _json_body():
+    """The request's JSON object. Requiring application/json means another website can't
+    send it without a CORS preflight, which this app never grants."""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        raise UnsupportedMediaType("Send a JSON object with Content-Type: application/json")
+    return data
+
+
+@app.errorhandler(UnsupportedMediaType)
+def _unsupported_media_type(e):
+    return jsonify({"error": e.description}), 415
 
 
 def _validate_bot_fields(data, bot_id=None):
@@ -208,8 +252,8 @@ def _validate_bot_fields(data, bot_id=None):
         nickname = str(data["nickname"] or "").strip()
         if not nickname or len(nickname) > 32:
             return None, "Nickname must be 1-32 characters"
-        if any(c in nickname for c in "[]@:") or any(c.isspace() for c in nickname):
-            return None, "Nickname cannot contain spaces or [ ] @ :"
+        if not re.fullmatch(NICKNAME_CHARS + "+", nickname):
+            return None, "Nickname can only use letters, numbers, _ and -"
         if nickname.lower() == OPERATOR_NAME.lower():
             return None, f"Nickname '{OPERATOR_NAME}' is reserved"
         for other in bot_mgr.get_all_bots():
@@ -253,9 +297,8 @@ def _validate_bot_fields(data, bot_id=None):
         if max_tokens in (None, ""):
             fields["max_tokens"] = None
         else:
-            try:
-                max_tokens = int(max_tokens)
-            except (TypeError, ValueError):
+            max_tokens = _parse_int(max_tokens)
+            if max_tokens is None:
                 return None, "Max tokens must be a whole number"
             if max_tokens < 1:
                 return None, "Max tokens must be positive"
@@ -271,13 +314,13 @@ def _validate_bot_fields(data, bot_id=None):
     if "api_key" in data and not _is_masked(data["api_key"]):
         fields["api_key"] = str(data["api_key"] or "").strip()
 
-    # A stored key must never follow the bot to a different host
+    # A stored key must never follow the bot to a different origin (scheme, host or port)
     if bot_id and "base_url" in fields and "api_key" not in fields:
         existing = bot_mgr.get_bot(bot_id)
-        if existing and existing["api_key"] and not _same_host(
+        if existing and existing["api_key"] and not _same_origin(
             existing["base_url"], fields["base_url"]
         ):
-            return None, "Endpoint host changed: re-enter the API key (or clear it) to save"
+            return None, "Endpoint changed: re-enter the API key (or clear it) to save"
 
     return fields, None
 
@@ -298,7 +341,7 @@ def get_messages():
 
 @app.route("/api/messages", methods=["POST"])
 def send_message():
-    data = request.get_json(force=True)
+    data = _json_body()
     content = data.get("content", "").strip()
     if not content:
         return jsonify({"error": "Empty message"}), 400
@@ -322,6 +365,7 @@ def list_conversations():
 @app.route("/api/conversations", methods=["POST"])
 def new_conversation():
     """Archive the live conversation and start a new one."""
+    _json_body()  # Not a simple request, so other websites can't trigger it
     return jsonify(store.new_conversation()), 201
 
 
@@ -336,7 +380,7 @@ def get_conversation(conversation_id):
 
 @app.route("/api/conversations/<conversation_id>", methods=["PUT"])
 def rename_conversation(conversation_id):
-    data = request.get_json(force=True)
+    data = _json_body()
     title = " ".join(str(data.get("title") or "").split())[:200]
     conv = store.rename_conversation(conversation_id, title)
     if not conv:
@@ -386,7 +430,7 @@ def get_settings():
 
 @app.route("/api/settings", methods=["PUT"])
 def update_settings():
-    data = request.get_json(force=True)
+    data = _json_body()
     updates = {}
 
     if "system_prompt" in data:
@@ -400,9 +444,8 @@ def update_settings():
         updates["system_prompt"] = prompt
 
     if "bot_chain_limit" in data:
-        try:
-            limit = int(data["bot_chain_limit"])
-        except (TypeError, ValueError):
+        limit = _parse_int(data["bot_chain_limit"])
+        if limit is None:
             return jsonify({"error": "Bot reply limit must be a whole number"}), 400
         if not 0 <= limit <= 100:
             return jsonify({"error": "Bot reply limit must be between 0 and 100"}), 400
@@ -425,7 +468,7 @@ def get_bots():
 
 @app.route("/api/bots", methods=["POST"])
 def add_bot():
-    data = request.get_json(force=True)
+    data = _json_body()
     payload = {
         "nickname": "Bot",
         "base_url": ENDPOINT_PRESETS["openrouter"],
@@ -446,7 +489,7 @@ def add_bot():
 
 @app.route("/api/bots/<bot_id>", methods=["PUT"])
 def update_bot(bot_id):
-    data = request.get_json(force=True)
+    data = _json_body()
     if not bot_mgr.get_bot(bot_id):
         return jsonify({"error": "Bot not found"}), 404
 
@@ -469,7 +512,7 @@ def delete_bot(bot_id):
 
 @app.route("/api/bots/<bot_id>/toggle", methods=["POST"])
 def toggle_bot(bot_id):
-    data = request.get_json(force=True)
+    data = _json_body()
     bot = bot_mgr.set_bot_enabled(bot_id, data.get("enabled", True))
     if not bot:
         return jsonify({"error": "Bot not found"}), 404
@@ -514,7 +557,7 @@ def list_models():
 
     Uses the stored key when the UI sends a masked one.
     """
-    data = request.get_json(force=True)
+    data = _json_body()
     base_url = str(data.get("base_url") or "").strip()
     api_key = data.get("api_key") or ""
     if not base_url.startswith(("http://", "https://")):
@@ -523,7 +566,7 @@ def list_models():
     if _is_masked(api_key):
         # Never send a stored key anywhere but the endpoint it was saved for
         bot = bot_mgr.get_bot(data.get("bot_id", ""))
-        same_endpoint = bot and _same_host(bot["base_url"], base_url)
+        same_endpoint = bot and _same_origin(bot["base_url"], base_url)
         api_key = bot["api_key"] if same_endpoint else ""
 
     try:

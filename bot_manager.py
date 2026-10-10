@@ -6,7 +6,7 @@ import uuid
 from flask import current_app
 
 import llm_clients
-from config import DEFAULT_BOTS, OPERATOR_NAME, PASS_TOKEN
+from config import DEFAULT_BOTS, NICKNAME_CHARS, OPERATOR_NAME, PASS_TOKEN
 from models import db, Bot
 from utils import is_oauth_or_rate_limit_error
 
@@ -17,7 +17,7 @@ BOT_FIELDS = (
 
 
 def _is_mentioned(nickname, content):
-    pattern = r"(?<!\w)@" + re.escape(nickname) + r"(?!\w)"
+    pattern = f"(?<!{NICKNAME_CHARS})@{re.escape(nickname)}(?!{NICKNAME_CHARS})"
     return re.search(pattern, content, re.IGNORECASE) is not None
 
 

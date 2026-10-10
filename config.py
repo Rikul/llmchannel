@@ -8,6 +8,10 @@ MAX_HISTORY = 500
 SSE_RETRY_MS = 3000
 BOT_RESPONSE_TIMEOUT = 120
 
+# Characters allowed in bot nicknames. @mentions use the same set as their boundaries, so
+# @Ada never matches inside @Ada-Bob
+NICKNAME_CHARS = r"[\w-]"
+
 # A bot replies with exactly this token to stay silent for a turn
 PASS_TOKEN = "[PASS]"
 
