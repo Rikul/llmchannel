@@ -98,7 +98,7 @@ class BotManager:
         self._lock = threading.Lock()
         self._app = None  # Will be set when app context is available
         self._last_seen_msg_id = {}
-        self._in_flight = set()
+        self._in_flight = {}  # bot id -> conversation id of its running reply
         self._next_dispatch_time = 0.0
         self._dispatch_delay = 4.0
         # Each operator message starts a new round with a fresh bot-to-bot reply budget
@@ -193,7 +193,7 @@ class BotManager:
             )
             if started is None:
                 with self._lock:
-                    self._in_flight.discard(bot_config.get("id"))
+                    self._release(bot_config.get("id"), conversation_id)
                 return
 
             history = self.message_store.get_history()
@@ -246,12 +246,20 @@ class BotManager:
                 else:
                     self.message_store.finish_streaming(msg_id)
                 with self._lock:
-                    self._in_flight.discard(bot_config.get("id"))
+                    self._release(bot_config.get("id"), conversation_id)
                     if bot_config.get("id"):
                         self._last_seen_msg_id[bot_config["id"]] = trigger_msg_id
                     # A silent reply doesn't spend the round's bot-to-bot budget
                     if cancelled and counted and round_id == self._round:
                         self._chain_replies = max(0, self._chain_replies - 1)
+
+    def _release(self, bot_id, conversation_id):
+        """Clear a bot's in-flight mark, unless a newer conversation's reply now holds it.
+
+        Caller must hold self._lock.
+        """
+        if bot_id and self._in_flight.get(bot_id) == conversation_id:
+            del self._in_flight[bot_id]
 
     def handle_message_finalized(self, message):
         if not message:
@@ -301,7 +309,8 @@ class BotManager:
                     continue
                 if self._last_seen_msg_id.get(bot_id) == msg_id:
                     continue
-                if bot_id in self._in_flight:
+                # A reply still winding down in an archived conversation doesn't block this one
+                if self._in_flight.get(bot_id) == message.get("conversation_id"):
                     continue
                 if not is_operator:
                     if self._chain_replies >= chain_limit:
@@ -309,7 +318,7 @@ class BotManager:
                     self._chain_replies += 1
 
                 self._last_seen_msg_id[bot_id] = msg_id
-                self._in_flight.add(bot_id)
+                self._in_flight[bot_id] = message.get("conversation_id")
                 now = time.time()
                 scheduled = max(now, self._next_dispatch_time)
                 self._next_dispatch_time = scheduled + self._dispatch_delay

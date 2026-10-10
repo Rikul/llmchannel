@@ -1,6 +1,8 @@
 from flask import Flask, render_template, request, jsonify, Response
 from flask_cors import CORS
+import hashlib
 import os
+from urllib.parse import urlsplit
 from sqlalchemy import inspect, text
 
 from dotenv import load_dotenv
@@ -50,6 +52,30 @@ _LEGACY_BASE_URLS = {
 }
 
 
+# Per-bot prompts the app used to ship as defaults. They aren't personas, so they're dropped;
+# anything else (including edited copies of these) is kept as the bot's persona.
+_LEGACY_DEFAULT_PROMPTS = {
+    "You are a helpful assistant in a group chat.",
+    "You are a helpful assistant participating in a group chat channel.",
+} | {
+    f"You are {name}, a helpful AI assistant participating in a group chat channel. "
+    "Keep your responses concise and conversational. You can see all messages from "
+    "the operator and other bots. Engage naturally in the discussion."
+    for name in ("Claude", "GPT", "Gemini")
+}
+# SHA-256 of whitespace-normalized SYSTEM_PROMPT.md as shipped in commits 0aaf515 and 5ff3ae6
+_LEGACY_DEFAULT_PROMPT_HASHES = {
+    "0a00a9cfc48afd00ca38a8fbd017a53b4f937a336e1f4041b64485aa881e0e9a",
+    "24d4850d6b7dc362e8b703b077a26ca5c3d8d5aae48cb246ab38ee02678b6f55",
+}
+
+
+def _is_legacy_default_prompt(prompt):
+    normalized = " ".join(prompt.split())
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    return normalized in _LEGACY_DEFAULT_PROMPTS or digest in _LEGACY_DEFAULT_PROMPT_HASHES
+
+
 def _legacy_bot_to_fields(row):
     """Map a bot row from the old multi-provider schema to the endpoint-based schema."""
     provider = row.get("provider") or ""
@@ -64,9 +90,8 @@ def _legacy_bot_to_fields(row):
     else:
         base_url = _LEGACY_BASE_URLS.get(provider, "")
 
-    # Old bots stored the full channel prompt per bot; only keep genuinely custom personas
     persona = (row.get("system_prompt") or "").strip()
-    if "{{CHAT_HISTORY}}" in persona or persona.startswith("You are a helpful assistant"):
+    if _is_legacy_default_prompt(persona):
         persona = ""
 
     return {
@@ -91,11 +116,21 @@ def _migrate_legacy_bots():
         return
 
     rows = [dict(r) for r in db.session.execute(text("SELECT * FROM bots")).mappings()]
-    db.session.execute(text("DROP TABLE bots"))
+    # Keep the old table until the new rows are committed, so a failure loses nothing
+    db.session.execute(text("ALTER TABLE bots RENAME TO bots_legacy"))
     db.session.commit()
-    db.create_all()
-    for row in rows:
-        db.session.add(Bot(**_legacy_bot_to_fields(row)))
+    try:
+        Bot.__table__.create(db.engine)
+        for row in rows:
+            db.session.add(Bot(**_legacy_bot_to_fields(row)))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        Bot.__table__.drop(db.engine, checkfirst=True)
+        db.session.execute(text("ALTER TABLE bots_legacy RENAME TO bots"))
+        db.session.commit()
+        raise
+    db.session.execute(text("DROP TABLE bots_legacy"))
     db.session.commit()
     app.logger.info(f"Migrated {len(rows)} bot(s) to OpenAI-compatible endpoints")
 
@@ -139,6 +174,10 @@ def _mask(key):
 
 def _is_masked(value):
     return isinstance(value, str) and value.startswith("****")
+
+
+def _same_host(url_a, url_b):
+    return urlsplit(url_a or "").netloc.lower() == urlsplit(url_b or "").netloc.lower()
 
 
 def _validate_bot_fields(data, bot_id=None):
@@ -214,6 +253,14 @@ def _validate_bot_fields(data, bot_id=None):
     # Only update API key if a real (non-masked) value was sent; "" clears it
     if "api_key" in data and not _is_masked(data["api_key"]):
         fields["api_key"] = str(data["api_key"] or "").strip()
+
+    # A stored key must never follow the bot to a different host
+    if bot_id and "base_url" in fields and "api_key" not in fields:
+        existing = bot_mgr.get_bot(bot_id)
+        if existing and existing["api_key"] and not _same_host(
+            existing["base_url"], fields["base_url"]
+        ):
+            return None, "Endpoint host changed: re-enter the API key (or clear it) to save"
 
     return fields, None
 
@@ -425,7 +472,7 @@ def list_models():
     if _is_masked(api_key):
         # Never send a stored key anywhere but the endpoint it was saved for
         bot = bot_mgr.get_bot(data.get("bot_id", ""))
-        same_endpoint = bot and bot["base_url"].rstrip("/") == base_url.rstrip("/")
+        same_endpoint = bot and _same_host(bot["base_url"], base_url)
         api_key = bot["api_key"] if same_endpoint else ""
 
     try:

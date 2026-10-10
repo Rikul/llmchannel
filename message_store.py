@@ -63,10 +63,13 @@ class MessageStore:
                     )
                     if first:
                         conv.title = _make_title(first.content)
-                # Bot replies cut off by a restart can never finish; keep what they wrote
-                Message.query.filter(Message.streaming.is_(True)).update(
-                    {"streaming": False}, synchronize_session=False
-                )
+                # Bot replies cut off by a restart can never finish. Tokens only reach the
+                # database when a stream ends, so these are usually empty placeholders.
+                for row in Message.query.filter(Message.streaming.is_(True)).all():
+                    if row.content.strip():
+                        row.streaming = False
+                    else:
+                        db.session.delete(row)
                 db.session.commit()
                 self._conversation_id = conv.id
                 self._message_cache = self._load_messages(conv.id, limit=MAX_HISTORY)

@@ -17,8 +17,8 @@ var Settings = (function () {
 
     function open() {
         $('#settings-modal').css('display', 'flex');
-        loadChannelSettings();
-        loadBots();
+        // Bot cards read the endpoint presets, so render them once settings have loaded
+        loadChannelSettings().always(loadBots);
     }
 
     function close() {
@@ -28,7 +28,7 @@ var Settings = (function () {
     // ── Channel Settings ────────────────────────────────────────────
 
     function loadChannelSettings() {
-        $.getJSON('/api/settings', function (data) {
+        return $.getJSON('/api/settings', function (data) {
             presets = data.endpoint_presets || {};
             defaultPrompt = data.default_system_prompt || '';
             $('#channel-system-prompt').val(data.system_prompt);
