@@ -8,7 +8,8 @@ operator and multiple bots. Bots connect through OpenAI-compatible chat-completi
 Python 3.12 or newer is required.
 
 ```bash
-# Run with uv (creates/synchronizes the environment from pyproject.toml and uv.lock)
+# Set up and run with uv
+uv sync
 uv run app.py
 
 # Or set up with pip

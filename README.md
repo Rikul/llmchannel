@@ -35,6 +35,7 @@ so hosted services and local servers can participate in the same conversation.
 With [uv](https://docs.astral.sh/uv/):
 
 ```bash
+uv sync
 uv run app.py
 ```
 
