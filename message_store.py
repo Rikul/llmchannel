@@ -364,7 +364,9 @@ class MessageStore:
                 msg["streaming"] = False
                 msg_dict = dict(msg)
 
-                self._announce("stream_end", {"id": msg_id})
+                # Carry the final text so clients that missed tokens (e.g. while
+                # reloading) still end up with the complete reply
+                self._announce("stream_end", {"id": msg_id, "content": msg["content"]})
                 if self._on_message_finalized:
                     self._on_message_finalized(msg_dict)
             except Exception as e:
@@ -385,7 +387,7 @@ class MessageStore:
                 self._message_cache = [
                     m for m in self._message_cache if m.get("id") != msg_id
                 ]
-                self._announce("stream_end", {"id": msg_id})
+                self._announce("stream_end", {"id": msg_id, "cancelled": True})
             except Exception as e:
                 db.session.rollback()
                 raise Exception(f"Failed to cancel streaming message: {e}")

@@ -16,6 +16,10 @@ BOT_FIELDS = (
 )
 
 
+class NicknameTaken(ValueError):
+    """Another bot already uses this nickname (case-insensitive)."""
+
+
 def _is_mentioned(nickname, content):
     pattern = f"(?<!{NICKNAME_CHARS})@{re.escape(nickname)}(?!{NICKNAME_CHARS})"
     return re.search(pattern, content, re.IGNORECASE) is not None
@@ -101,6 +105,7 @@ class BotManager:
         self._in_flight = {}  # bot id -> conversation id of its running reply
         self._next_dispatch_time = 0.0
         self._dispatch_delay = 4.0
+        self._dispatch_conversation = None  # conversation the dispatch schedule belongs to
         # Each operator message starts a new round with a fresh bot-to-bot reply budget
         self._round = 0
         self._chain_replies = 0
@@ -121,8 +126,19 @@ class BotManager:
                 db.session.rollback()
                 raise Exception(f"Failed to load default bots: {e}")
 
+    def _check_nickname_free(self, nickname, bot_id=None):
+        """Raise NicknameTaken if another bot has this nickname. Caller holds self._lock,
+        so the check and the following write are atomic."""
+        for other in Bot.query.all():
+            if other.id != bot_id and other.nickname.lower() == nickname.lower():
+                raise NicknameTaken(
+                    f"Another bot is already named '{other.nickname}'"
+                )
+
     def add_bot(self, **fields):
         with self._lock:
+            if "nickname" in fields:
+                self._check_nickname_free(fields["nickname"])
             try:
                 values = {k: v for k, v in fields.items() if k in BOT_FIELDS}
                 values.setdefault("enabled", True)
@@ -150,6 +166,8 @@ class BotManager:
 
     def update_bot(self, bot_id, **kwargs):
         with self._lock:
+            if "nickname" in kwargs:
+                self._check_nickname_free(kwargs["nickname"], bot_id=bot_id)
             try:
                 bot = db.session.get(Bot, bot_id)
                 if not bot:
@@ -280,21 +298,24 @@ class BotManager:
                 self._round += 1
                 self._chain_replies = 0
 
-            bots = Bot.query.filter(
-                Bot.enabled.is_(True),
-                Bot.base_url.isnot(None),
-                Bot.base_url != "",
-            ).all()
-            bots_snapshot = [bot.to_dict() for bot in bots]
+            # Replies queued for an archived conversation must not delay the new one
+            conversation_id = message.get("conversation_id")
+            if conversation_id != self._dispatch_conversation:
+                self._dispatch_conversation = conversation_id
+                self._next_dispatch_time = 0.0
+
+            all_bots = [bot.to_dict() for bot in Bot.query.all()]
+            bots_snapshot = [b for b in all_bots if b["enabled"] and b["base_url"]]
             participants = [OPERATOR_NAME] + [b["nickname"] for b in bots_snapshot]
 
-            # The operator can address specific bots with @Name; only those reply
+            # The operator can address specific bots with @Name; only those reply. Mentions
+            # are matched against every bot, so "@SomeDisabledBot" means nobody answers
+            # rather than everybody.
             targets = None
             if is_operator:
-                mentioned = {
-                    b["id"] for b in bots_snapshot if _is_mentioned(b["nickname"], content)
-                }
-                targets = mentioned or None
+                mentioned = {b["id"] for b in all_bots if _is_mentioned(b["nickname"], content)}
+                if mentioned:
+                    targets = mentioned
 
             chain_limit = self.settings.get("bot_chain_limit")
 

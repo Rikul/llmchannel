@@ -9,6 +9,8 @@ var ChatApp = (function () {
         liveConversation: null,  // the conversation that accepts messages
         viewing: null,           // archived conversation shown read-only, or null
         viewRequest: 0,          // bumped on every view switch; stale responses are dropped
+        liveRequest: 0,          // same, for reloads of the live conversation
+        liveBuffer: null,        // messages that arrived over SSE while a reload was in flight
     };
 
     // ── Helpers ──────────────────────────────────────────────────────
@@ -121,12 +123,27 @@ var ChatApp = (function () {
     // ── Conversations ───────────────────────────────────────────────
 
     function loadLive() {
+        var request = ++state.liveRequest;
         state.streamingMessages = {};
         state.pendingStreams = {};
+        state.liveBuffer = [];
         $.getJSON('/api/messages', function (msgs) {
+            if (request !== state.liveRequest) return;  // a newer reload superseded this one
+            // Keep messages that arrived over SSE after the request was sent
+            var known = {};
+            $.each(msgs, function (i, m) { known[m.id] = true; });
+            $.each(state.liveBuffer, function (i, m) {
+                if (!known[m.id]) msgs.push(m);
+            });
+            state.liveBuffer = null;
             state.messages = msgs;
             if (!state.viewing) renderAllMessages();
         });
+    }
+
+    function trackLiveMessage(msg) {
+        state.messages.push(msg);
+        if (state.liveBuffer) state.liveBuffer.push(msg);
     }
 
     function refreshConversations() {
@@ -307,7 +324,7 @@ var ChatApp = (function () {
             if (msg.type === 'operator') refreshConversations();
             if (state.viewing) return;
             if (!state.messages.length) $('#messages').empty();
-            state.messages.push(msg);
+            trackLiveMessage(msg);
             appendMessage(msg);
         });
 
@@ -326,7 +343,7 @@ var ChatApp = (function () {
                 if (pending) {
                     if (!state.messages.length) $('#messages').empty();
                     pending.content = data.token;
-                    state.messages.push(pending);
+                    trackLiveMessage(pending);
                     appendMessage(pending);
                     $('#content-' + pending.id).addClass('streaming-cursor');
                     state.streamingMessages[pending.id] = true;
@@ -346,14 +363,23 @@ var ChatApp = (function () {
         evtSource.addEventListener('stream_end', function (e) {
             if (state.viewing) return;
             var data = JSON.parse(e.data);
-            $('#content-' + data.id).removeClass('streaming-cursor');
+            var $content = $('#content-' + data.id);
+            $content.removeClass('streaming-cursor');
             delete state.streamingMessages[data.id];
             delete state.pendingStreams[data.id];
 
-            // Update the stored message content
+            if (data.cancelled) {
+                // The bot passed or failed silently; drop anything already shown
+                $('#msg-' + data.id).remove();
+                state.messages = $.grep(state.messages, function (m) { return m.id !== data.id; });
+                return;
+            }
+            // The server sends the final text, which repairs tokens missed during a reload
+            if (typeof data.content === 'string') $content.text(data.content);
+
             for (var i = state.messages.length - 1; i >= 0; i--) {
                 if (state.messages[i].id === data.id) {
-                    state.messages[i].content = $('#content-' + data.id).text();
+                    state.messages[i].content = $content.text();
                     state.messages[i].streaming = false;
                     break;
                 }

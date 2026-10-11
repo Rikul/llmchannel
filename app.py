@@ -16,7 +16,7 @@ from config import (
     DEFAULT_SYSTEM_PROMPT, ENDPOINT_PRESETS, NICKNAME_CHARS, OPERATOR_NAME, OPERATOR_COLOR,
 )
 from message_store import MessageStore
-from bot_manager import BotManager
+from bot_manager import BotManager, NicknameTaken
 from models import db, Bot, EndpointModels
 
 load_dotenv()
@@ -214,6 +214,23 @@ def _same_origin(url_a, url_b):
     return _origin(url_a) == _origin(url_b)
 
 
+def _endpoint_url_error(url):
+    """Why an endpoint URL is unacceptable, or None if it's fine."""
+    parts = urlsplit(url)
+    if parts.scheme.lower() not in ("http", "https"):
+        return "Endpoint URL must start with http:// or https://"
+    if parts.username is not None or parts.password is not None:
+        # They'd be stored and shown unmasked; keys belong in the API key field
+        return "Endpoint URL can't contain a username or password; use the API key field"
+    try:
+        port = parts.port
+    except ValueError:
+        return "Endpoint URL has an invalid port"
+    if not parts.hostname or port == 0:
+        return "Endpoint URL needs a host"
+    return None
+
+
 def _parse_int(value):
     """Parse a whole number from JSON (int, integral float, or digit string), else None."""
     if isinstance(value, bool):
@@ -256,15 +273,14 @@ def _validate_bot_fields(data, bot_id=None):
             return None, "Nickname can only use letters, numbers, _ and -"
         if nickname.lower() == OPERATOR_NAME.lower():
             return None, f"Nickname '{OPERATOR_NAME}' is reserved"
-        for other in bot_mgr.get_all_bots():
-            if other["id"] != bot_id and other["nickname"].lower() == nickname.lower():
-                return None, f"Another bot is already named '{other['nickname']}'"
+        # Uniqueness is checked by BotManager under its lock, atomically with the write
         fields["nickname"] = nickname
 
     if "base_url" in data:
         base_url = str(data["base_url"] or "").strip().rstrip("/")
-        if not base_url.startswith(("http://", "https://")):
-            return None, "Endpoint URL must start with http:// or https://"
+        url_error = _endpoint_url_error(base_url)
+        if url_error:
+            return None, url_error
         fields["base_url"] = base_url
 
     if "model" in data:
@@ -308,7 +324,9 @@ def _validate_bot_fields(data, bot_id=None):
         fields["color"] = str(data["color"] or "#6B7280")[:20]
 
     if "enabled" in data:
-        fields["enabled"] = bool(data["enabled"])
+        if not isinstance(data["enabled"], bool):
+            return None, "Enabled must be true or false"
+        fields["enabled"] = data["enabled"]
 
     # Only update API key if a real (non-masked) value was sent; "" clears it
     if "api_key" in data and not _is_masked(data["api_key"]):
@@ -482,7 +500,10 @@ def add_bot():
     fields, error = _validate_bot_fields(payload)
     if error:
         return jsonify({"error": error}), 400
-    bot = bot_mgr.add_bot(**fields)
+    try:
+        bot = bot_mgr.add_bot(**fields)
+    except NicknameTaken as e:
+        return jsonify({"error": str(e)}), 400
     bot["api_key"] = _mask(bot["api_key"])
     return jsonify(bot), 201
 
@@ -497,7 +518,12 @@ def update_bot(bot_id):
     if error:
         return jsonify({"error": error}), 400
 
-    bot = bot_mgr.update_bot(bot_id, **fields)
+    try:
+        bot = bot_mgr.update_bot(bot_id, **fields)
+    except NicknameTaken as e:
+        return jsonify({"error": str(e)}), 400
+    if not bot:
+        return jsonify({"error": "Bot not found"}), 404
     bot["api_key"] = _mask(bot["api_key"])
     return jsonify(bot)
 
@@ -513,7 +539,10 @@ def delete_bot(bot_id):
 @app.route("/api/bots/<bot_id>/toggle", methods=["POST"])
 def toggle_bot(bot_id):
     data = _json_body()
-    bot = bot_mgr.set_bot_enabled(bot_id, data.get("enabled", True))
+    enabled = data.get("enabled", True)
+    if not isinstance(enabled, bool):
+        return jsonify({"error": "Enabled must be true or false"}), 400
+    bot = bot_mgr.set_bot_enabled(bot_id, enabled)
     if not bot:
         return jsonify({"error": "Bot not found"}), 404
     bot["api_key"] = _mask(bot["api_key"])
@@ -560,8 +589,9 @@ def list_models():
     data = _json_body()
     base_url = str(data.get("base_url") or "").strip()
     api_key = data.get("api_key") or ""
-    if not base_url.startswith(("http://", "https://")):
-        return jsonify({"error": "Endpoint URL must start with http:// or https://"}), 400
+    url_error = _endpoint_url_error(base_url)
+    if url_error:
+        return jsonify({"error": url_error}), 400
 
     if _is_masked(api_key):
         # Never send a stored key anywhere but the endpoint it was saved for
