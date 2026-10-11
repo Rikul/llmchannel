@@ -124,8 +124,25 @@ var ModuleName = (function () {
 
 ## LLM Client Integration
 
-When adding new providers:
-1. Add to `llm_clients.py`
-2. Update `modelHints` in `settings.js`
-3. Follow existing streaming generator pattern
-4. Handle provider-specific requirements (e.g., Anthropic requires user role first)
+All bots talk to OpenAI-compatible chat completion endpoints (OpenRouter, Ollama,
+LM Studio, llama.cpp, vLLM, OpenAI, ...). There are no provider-specific clients.
+- Each bot stores `base_url`, `api_key` (optional for local servers), `model`, `persona`,
+  and optional `temperature` / `max_tokens`
+- `SYSTEM_PROMPT.md` is the default main system prompt; the operator can override it in
+  Settings (stored in the `settings` table). Placeholders: `{{BOT_NAME}}`,
+  `{{OPERATOR_NAME}}`, `{{PARTICIPANTS}}`, `{{PERSONA}}`
+- Bots reply `[PASS]` to stay silent; `bot_manager._ReplyFilter` drops those messages
+- Add endpoint presets to `ENDPOINT_PRESETS` in `config.py`
+- "Fetch models" results are cached per endpoint in the `endpoint_models` table, keyed by
+  `llm_clients.normalize_base_url` (mirrored by `normalizeUrl` in `settings.js`)
+
+## Conversations
+
+All messages are stored in SQLite (`messages.conversation_id` → `conversations`).
+- Exactly one conversation is live (`archived_at IS NULL`); only it accepts messages and is
+  cached in memory by `MessageStore` (last `MAX_HISTORY` messages, never deleted from disk)
+- "New conversation" archives the live one; bot replies still streaming are saved as-is and
+  their threads stop. Archived conversations are read-only via `/api/conversations/<id>`
+- Resuming an archived conversation would mean making it live again and loading its cache
+- Archiving snapshots every bot profile into `conversation_bots` (no API keys) and the main
+  system prompt / reply limit onto the conversation row, for reference

@@ -1,14 +1,36 @@
-import os
+from urllib.parse import urlsplit
 
-from flask import current_app
-
-from config import OPERATOR_NAME
-from models import Bot, db
+from config import BOT_RESPONSE_TIMEOUT, OPERATOR_NAME
 from utils import is_oauth_or_rate_limit_error
+
+# Local servers (Ollama, LM Studio, llama.cpp) ignore the key, but the SDK requires one
+_PLACEHOLDER_KEY = "not-needed"
+
+_NO_PERSONA = "(No persona set. Be yourself: helpful, direct and concise.)"
+
+
+# ── Prompt Building ──────────────────────────────────────────────────────
+
+def build_system_prompt(template, bot_name, persona, participants):
+    """Fill the channel system prompt template for one bot.
+
+    Supported placeholders: {{BOT_NAME}}, {{OPERATOR_NAME}}, {{PARTICIPANTS}}, {{PERSONA}}.
+    If the template has no {{PERSONA}} placeholder, a non-empty persona is appended.
+    """
+    persona = (persona or "").strip()
+    prompt = template
+    prompt = prompt.replace("{{BOT_NAME}}", bot_name)
+    prompt = prompt.replace("{{OPERATOR_NAME}}", OPERATOR_NAME)
+    prompt = prompt.replace("{{PARTICIPANTS}}", ", ".join(participants))
+    if "{{PERSONA}}" in prompt:
+        prompt = prompt.replace("{{PERSONA}}", persona or _NO_PERSONA)
+    elif persona:
+        prompt += "\n\n## Your persona\n" + persona
+    return prompt
 
 
 def _format_channel_history(messages, bot_nickname):
-    """Convert channel message history into a provider-agnostic format.
+    """Convert channel message history into chat-completion messages.
 
     Returns list of dicts: {"role": "user"|"assistant", "content": str}
     - Bot's own prior messages -> assistant role
@@ -41,7 +63,7 @@ def _format_channel_history(messages, bot_nickname):
                 "content": f"[{sender}]: {content}",
             })
 
-    # Merge consecutive same-role messages (required by Anthropic)
+    # Merge consecutive same-role messages (strict chat templates require alternation)
     merged = []
     for entry in formatted:
         if merged and merged[-1]["role"] == entry["role"]:
@@ -49,56 +71,61 @@ def _format_channel_history(messages, bot_nickname):
         else:
             merged.append(dict(entry))
 
+    # Many local chat templates require the first turn after system to be a user turn
+    if not merged or merged[0]["role"] != "user":
+        merged.insert(0, {"role": "user", "content": "[System]: Channel opened."})
+
     return merged
 
 
-def stream_response(
-    provider,
-    model,
-    api_key,
-    messages,
-    system_prompt,
-    gemini_access_token=None,
-    gemini_refresh_token=None,
-    bot_id=None,
-):
-    """Generator that yields tokens one at a time from the LLM API."""
-    if provider == "gemini":
-        if not api_key and not gemini_access_token and not gemini_refresh_token:
-            yield "[Error: No API key or Google OAuth configured for this bot]"
-            return
-    elif provider == "ollama":
-        # Ollama runs locally, no API key required
-        pass
-    elif not api_key:
-        yield "[Error: No API key configured for this bot]"
+def normalize_base_url(url):
+    """Canonical form of an endpoint URL, used as the model-list cache key.
+
+    Lowercases scheme and host and drops trailing slashes; the path keeps its case.
+    """
+    parts = urlsplit((url or "").strip())
+    path = parts.path.rstrip("/")
+    return f"{parts.scheme.lower()}://{parts.netloc.lower()}{path}"
+
+
+# ── OpenAI-Compatible Client ─────────────────────────────────────────────
+
+def _make_client(base_url, api_key, timeout=BOT_RESPONSE_TIMEOUT):
+    from openai import OpenAI
+
+    return OpenAI(
+        base_url=base_url.strip().rstrip("/"),
+        api_key=api_key or _PLACEHOLDER_KEY,
+        timeout=timeout,
+        max_retries=1,
+    )
+
+
+def stream_response(base_url, api_key, model, messages, system_prompt,
+                    temperature=None, max_tokens=None):
+    """Generator that yields tokens one at a time from an OpenAI-compatible endpoint."""
+    if not base_url:
+        yield "[Error: No endpoint URL configured for this bot]"
+        return
+    if not model:
+        yield "[Error: No model configured for this bot]"
         return
 
     try:
-        if provider == "openai":
-            yield from _stream_openai(model, api_key, messages, system_prompt)
-        elif provider == "anthropic":
-            yield from _stream_anthropic(model, api_key, messages, system_prompt)
-        elif provider == "gemini":
-            yield from _stream_gemini(
-                model,
-                api_key,
-                messages,
-                system_prompt,
-                gemini_access_token,
-                gemini_refresh_token,
-                bot_id,
-            )
-        elif provider == "deepseek":
-            yield from _stream_deepseek(model, api_key, messages, system_prompt)
-        elif provider == "qwen":
-            yield from _stream_qwen(model, api_key, messages, system_prompt)
-        elif provider == "ollama":
-            yield from _stream_ollama(model, api_key, messages, system_prompt)
-        elif provider == "openai-compatible":
-            yield from _stream_openai_compatible(model, api_key, messages, system_prompt)
-        else:
-            yield f"[Error: Unknown provider '{provider}']"
+        client = _make_client(base_url, api_key)
+        formatted = [{"role": "system", "content": system_prompt}]
+        formatted.extend({"role": m["role"], "content": m["content"]} for m in messages)
+
+        kwargs = {"model": model, "messages": formatted, "stream": True}
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        if max_tokens:
+            kwargs["max_tokens"] = max_tokens
+
+        stream = client.chat.completions.create(**kwargs)
+        for chunk in stream:
+            if chunk.choices and chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
     except Exception as e:
         error_msg = str(e)
         if is_oauth_or_rate_limit_error(error_msg):
@@ -106,343 +133,7 @@ def stream_response(
         yield f"[Error: {error_msg}]"
 
 
-def _stream_openai(model, api_key, messages, system_prompt):
-    from openai import OpenAI
-
-    client = OpenAI(api_key=api_key)
-    formatted = [{"role": "system", "content": system_prompt}]
-    for msg in messages:
-        formatted.append({"role": msg["role"], "content": msg["content"]})
-
-    stream = client.chat.completions.create(
-        model=model,
-        messages=formatted,
-        stream=True,
-    )
-    for chunk in stream:
-        if chunk.choices and chunk.choices[0].delta.content:
-            yield chunk.choices[0].delta.content
-
-
-def _stream_anthropic(model, api_key, messages, system_prompt):
-    import anthropic
-
-    client = anthropic.Anthropic(api_key=api_key)
-
-    # Ensure messages start with user role (Anthropic requirement)
-    formatted = []
-    for msg in messages:
-        formatted.append({"role": msg["role"], "content": msg["content"]})
-
-    if not formatted or formatted[0]["role"] != "user":
-        formatted.insert(0, {"role": "user", "content": "[System]: Channel opened."})
-
-    with client.messages.stream(
-        model=model,
-        max_tokens=4096,
-        system=system_prompt,
-        messages=formatted,
-    ) as stream:
-        for text in stream.text_stream:
-            yield text
-
-
-def _stream_gemini(
-    model,
-    api_key,
-    messages,
-    system_prompt,
-    gemini_access_token=None,
-    gemini_refresh_token=None,
-    bot_id=None,
-):
-    if (gemini_access_token or gemini_refresh_token) and not api_key:
-        access_token = gemini_access_token
-        if gemini_refresh_token:
-            refreshed_token = _refresh_google_access_token(gemini_refresh_token)
-            if refreshed_token:
-                access_token = refreshed_token
-                _store_refreshed_access_token(bot_id, refreshed_token)
-
-        if not access_token:
-            raise Exception("Missing Google OAuth access token")
-
-        yield from _stream_gemini_oauth(model, access_token, messages, system_prompt)
-        return
-
-    from google import genai
-    from google.genai import types
-
-    client = genai.Client(api_key=api_key)
-
-    contents = []
-    for msg in messages:
-        role = "user" if msg["role"] == "user" else "model"
-        contents.append(types.Content(
-            role=role,
-            parts=[types.Part(text=msg["content"])],
-        ))
-
-    # Ensure contents is not empty and starts with user
-    if not contents or contents[0].role != "user":
-        contents.insert(0, types.Content(
-            role="user",
-            parts=[types.Part(text="[System]: Channel opened.")],
-        ))
-
-    response = client.models.generate_content_stream(
-        model=model,
-        contents=contents,
-        config=types.GenerateContentConfig(
-            system_instruction=system_prompt,
-        ),
-    )
-    for chunk in response:
-        if chunk.text:
-            yield chunk.text
-
-
-
-
-def _refresh_google_access_token(refresh_token):
-    from google.auth.transport.requests import Request
-    from google.oauth2.credentials import Credentials
-
-    client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
-    client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
-
-    if not refresh_token or not client_id or not client_secret:
-        return None
-
-    creds = Credentials(
-        token=None,
-        refresh_token=refresh_token,
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=client_id,
-        client_secret=client_secret,
-    )
-    try:
-        creds.refresh(Request())
-        return creds.token
-    except Exception as e:
-        current_app.logger.warning(f"Google OAuth token refresh failed: {e}")
-        return None
-    except Exception:
-        return None
-
-    return creds.token
-
-
-def _store_refreshed_access_token(bot_id, access_token):
-    if not bot_id or not access_token:
-        return
-
-    try:
-        app = current_app._get_current_object()
-    except RuntimeError:
-        return
-
-    with app.app_context():
-        try:
-            bot = db.session.get(Bot, bot_id)
-            if not bot:
-                return
-            bot.gemini_access_token = access_token
-            db.session.commit()
-        except Exception:
-            db.session.rollback()
-            app.logger.exception(
-                "Failed to store refreshed Gemini access token for bot_id=%s",
-                bot_id,
-            )
-
-
-def _stream_gemini_oauth(model, access_token, messages, system_prompt):
-    import json
-    import requests
-
-    endpoint = (
-        "https://generativelanguage.googleapis.com/v1beta/models/" +
-        model +
-        ":streamGenerateContent?alt=sse"
-    )
-
-    contents = []
-    for msg in messages:
-        role = "user" if msg["role"] == "user" else "model"
-        contents.append({
-            "role": role,
-            "parts": [{"text": msg["content"]}],
-        })
-
-    if not contents or contents[0]["role"] != "user":
-        contents.insert(0, {
-            "role": "user",
-            "parts": [{"text": "[System]: Channel opened."}],
-        })
-
-    payload = {
-        "contents": contents,
-    }
-
-    if system_prompt:
-        payload["systemInstruction"] = {
-            "parts": [{"text": system_prompt}],
-        }
-
-    response = requests.post(
-        endpoint,
-        headers={
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json",
-        },
-        data=json.dumps(payload),
-        stream=True,
-        timeout=60,
-    )
-
-    if response.status_code != 200:
-        raise Exception(f"Gemini OAuth error: {response.status_code} {response.text}")
-
-    for line in response.iter_lines(decode_unicode=True):
-        if not line:
-            continue
-        if line.startswith("data:"):
-            line = line[5:].strip()
-        if not line or line == "[DONE]":
-            continue
-        try:
-            data = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-
-        candidates = data.get("candidates", [])
-        for candidate in candidates:
-            content = candidate.get("content", {})
-            parts = content.get("parts", [])
-            for part in parts:
-                text = part.get("text")
-                if text:
-                    yield text
-
-
-def _stream_deepseek(model, api_key, messages, system_prompt):
-    """Stream responses from DeepSeek API (OpenAI-compatible)."""
-    from openai import OpenAI
-
-    client = OpenAI(
-        api_key=api_key,
-        base_url="https://api.deepseek.com",
-    )
-    formatted = [{"role": "system", "content": system_prompt}]
-    for msg in messages:
-        formatted.append({"role": msg["role"], "content": msg["content"]})
-
-    stream = client.chat.completions.create(
-        model=model,
-        messages=formatted,
-        stream=True,
-    )
-    for chunk in stream:
-        if chunk.choices and chunk.choices[0].delta.content:
-            yield chunk.choices[0].delta.content
-
-
-def _stream_qwen(model, api_key, messages, system_prompt):
-    """Stream responses from Qwen/DashScope API (OpenAI-compatible)."""
-    from openai import OpenAI
-
-    client = OpenAI(
-        api_key=api_key,
-        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-    )
-    formatted = [{"role": "system", "content": system_prompt}]
-    for msg in messages:
-        formatted.append({"role": msg["role"], "content": msg["content"]})
-
-    stream = client.chat.completions.create(
-        model=model,
-        messages=formatted,
-        stream=True,
-    )
-    for chunk in stream:
-        if chunk.choices and chunk.choices[0].delta.content:
-            yield chunk.choices[0].delta.content
-
-
-def _stream_ollama(model, api_key, messages, system_prompt):
-    """Stream responses from Ollama local API."""
-    import json
-    import requests
-
-    # Default Ollama endpoint; `api_key` is overloaded here as a base URL
-    base_url = api_key if api_key else "http://localhost:11434"
-    # Normalize base URL to avoid issues like "//api/chat" and stray whitespace
-    base_url = base_url.strip()
-    if base_url.endswith("/"):
-        base_url = base_url.rstrip("/")
-    endpoint = f"{base_url}/api/chat"
-
-    formatted = [{"role": "system", "content": system_prompt}]
-    for msg in messages:
-        formatted.append({"role": msg["role"], "content": msg["content"]})
-
-    payload = {
-        "model": model,
-        "messages": formatted,
-        "stream": True,
-    }
-
-    response = requests.post(
-        endpoint,
-        json=payload,
-        stream=True,
-        timeout=120,
-    )
-
-    if response.status_code != 200:
-        raise Exception(f"Ollama error: {response.status_code} {response.text}")
-
-    for line in response.iter_lines(decode_unicode=True):
-        if not line:
-            continue
-        try:
-            data = json.loads(line)
-            if "message" in data and "content" in data["message"]:
-                content = data["message"]["content"]
-                if content:
-                    yield content
-        except json.JSONDecodeError:
-            continue
-
-
-def _stream_openai_compatible(model, api_key, messages, system_prompt):
-    """Stream responses from any OpenAI-compatible API.
-    
-    API key format: "BASE_URL|ACTUAL_API_KEY"
-    Example: "https://api.together.xyz/v1|your-api-key-here"
-    """
-    from openai import OpenAI
-
-    # Parse base_url from api_key if it contains |
-    if "|" in api_key:
-        base_url, actual_key = api_key.split("|", 1)
-    else:
-        raise Exception("OpenAI-compatible provider requires API key format: BASE_URL|API_KEY")
-
-    client = OpenAI(
-        api_key=actual_key,
-        base_url=base_url,
-    )
-    formatted = [{"role": "system", "content": system_prompt}]
-    for msg in messages:
-        formatted.append({"role": msg["role"], "content": msg["content"]})
-
-    stream = client.chat.completions.create(
-        model=model,
-        messages=formatted,
-        stream=True,
-    )
-    for chunk in stream:
-        if chunk.choices and chunk.choices[0].delta.content:
-            yield chunk.choices[0].delta.content
+def list_models(base_url, api_key):
+    """Return the sorted model IDs an endpoint advertises via GET /models."""
+    client = _make_client(base_url, api_key, timeout=15)
+    return sorted({m.id for m in client.models.list()})

@@ -24,7 +24,7 @@
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text-muted);">
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
             </svg>
-            <!-- <span style="font-weight: 700; font-size: 0.9375rem;">llmchannel</span> -->
+            <span id="conversation-title" class="conversation-title">#llm-channel</span>
         </div>
         <div class="ml-auto flex items-center gap-3">
             <span id="participant-count" style="font-size: 0.75rem; color: var(--text-muted);">0 participants</span>
@@ -39,7 +39,14 @@
             <div style="padding: 12px 16px; font-size: 0.6875rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted);">
                 Users
             </div>
-            <div id="user-list" class="flex-1 overflow-y-auto px-2" style="padding-bottom: 8px;">
+            <div id="user-list" class="overflow-y-auto px-2" style="padding-bottom: 8px; max-height: 40%;">
+                <!-- Dynamically populated -->
+            </div>
+
+            <div style="padding: 12px 16px 6px; font-size: 0.6875rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted);">
+                Conversations
+            </div>
+            <div id="conversation-list" class="flex-1 overflow-y-auto px-2" style="padding-bottom: 8px;">
                 <!-- Dynamically populated -->
             </div>
 
@@ -54,10 +61,10 @@
                 <button id="btn-theme" class="icon-btn" title="Toggle theme">
                     <!-- Populated by theme.js -->
                 </button>
-                <button id="btn-clear" class="icon-btn" title="Clear chat" style="margin-left: auto;">
+                <button id="btn-new-conversation" class="icon-btn" title="New conversation (archives this one)" style="margin-left: auto;">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <polyline points="3 6 5 6 21 6"/>
-                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                        <path d="M12 20h9"/>
+                        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
                     </svg>
                 </button>
             </div>
@@ -65,6 +72,21 @@
 
         <!-- ── Chat Area ───────────────────────────────────────────── -->
         <main class="flex-1 flex flex-col overflow-hidden">
+
+            <!-- Archived conversation banner (read-only view) -->
+            <div id="archive-banner" class="archive-banner" style="display: none;">
+                <div style="flex: 1; min-width: 0;">
+                    <div class="archive-banner-label">Archived · read-only</div>
+                    <div id="archive-banner-title" class="archive-banner-title"></div>
+                </div>
+                <button id="btn-archive-bots" class="btn btn-ghost btn-sm">Bot profiles</button>
+                <button id="btn-archive-rename" class="btn btn-ghost btn-sm">Rename</button>
+                <button id="btn-archive-delete" class="btn btn-danger btn-sm">Delete</button>
+                <button id="btn-archive-back" class="btn btn-primary btn-sm">Back to live chat</button>
+            </div>
+
+            <!-- Bot profiles and settings saved with an archived conversation -->
+            <div id="archive-bots" class="archive-bots" style="display: none;"></div>
 
             <!-- Messages -->
             <div id="messages" class="flex-1 overflow-y-auto" style="padding: 8px 0;">
@@ -75,16 +97,16 @@
             </div>
 
             <!-- Input Bar -->
-            <div class="input-area" style="padding: 12px 16px;">
-                <form id="chat-form" style="display: flex; gap: 10px;">
-                    <input
+            <div id="input-area" class="input-area" style="padding: 12px 16px;">
+                <form id="chat-form" style="display: flex; align-items: flex-end; gap: 10px;">
+                    <textarea
                         id="chat-input"
-                        type="text"
                         class="chat-input"
-                        placeholder="Type a message..."
+                        rows="1"
+                        placeholder="Type a message… (Enter to send, Shift+Enter or Ctrl+Enter for a new line)"
                         autocomplete="off"
                         style="flex: 1; padding: 10px 16px; border-radius: 8px;"
-                    >
+                    ></textarea>
                     <button type="submit" class="btn btn-primary" style="padding: 10px 20px; border-radius: 8px;">
                         <span style="display: flex; align-items: center; gap: 6px;">
                             Send
@@ -112,9 +134,34 @@
                 </button>
             </div>
             <div class="modal-body">
-                <div style="font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px;">
-                    Bot Configuration
+                <div class="section-title">Channel</div>
+                <div id="channel-settings" class="bot-card">
+                    <div class="field-group">
+                        <label for="channel-system-prompt">Main System Prompt</label>
+                        <textarea id="channel-system-prompt" rows="10"></textarea>
+                        <div class="field-hint">
+                            Sent to every bot. Placeholders: <code>{{ '{{BOT_NAME}}' }}</code>,
+                            <code>{{ '{{OPERATOR_NAME}}' }}</code>, <code>{{ '{{PARTICIPANTS}}' }}</code>,
+                            <code>{{ '{{PERSONA}}' }}</code> (the bot's own persona; appended at the
+                            end if the placeholder is missing). Bots reply <code>[PASS]</code> to stay silent.
+                        </div>
+                    </div>
+                    <div class="field-group">
+                        <label for="channel-chain-limit">Bot-to-bot reply limit</label>
+                        <input type="number" id="channel-chain-limit" min="0" max="100" style="width: 120px;">
+                        <div class="field-hint">
+                            Max replies bots make to each other after each of your messages.
+                            0 = bots only answer you. Address bots with <code>@Name</code> to
+                            choose who answers.
+                        </div>
+                    </div>
+                    <div style="display: flex; justify-content: flex-end; gap: 8px;">
+                        <button id="btn-reset-prompt" class="btn btn-ghost btn-sm">Reset prompt to default</button>
+                        <button id="btn-save-channel" class="btn btn-primary btn-sm">Save</button>
+                    </div>
                 </div>
+
+                <div class="section-title">Bots</div>
                 <div id="bot-config-list">
                     <!-- Dynamically populated bot cards -->
                 </div>
